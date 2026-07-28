@@ -41,9 +41,11 @@
 
 | 클래스 ID | 클래스명 | 한글 | 대상 물체 | 수거함 |
 |---|---|---|---|---|
-| 0 | `pet` | 페트 | 투명 페트병 (라벨 제거/부착 무관), 플라스틱 음료병 | `blue_bin` |
-| 1 | `can` | 캔 | 알루미늄 음료캔, 통조림캔 | `green_bin` |
-| 2 | `general` | 일반 | 종이컵, 과자봉지, 비닐, 티슈, 일회용 수저 | `gray_bin` |
+| 0 | `can` | 캔 | 알루미늄 음료캔, 통조림캔 | `green_bin` |
+| 1 | `general` | 일반 | 종이컵, 과자봉지, 비닐, 티슈, 일회용 수저 | `gray_bin` |
+| 2 | `pet` | 페트 | 투명 페트병 (라벨 제거/부착 무관), 플라스틱 음료병 | `blue_bin` |
+
+> **ID 순서 주의:** Roboflow는 클래스를 알파벳순으로 강제 정렬해서 내보냅니다. 그래서 실제 학습 데이터의 클래스 ID는 `pet(0)/can(1)/general(2)`가 아니라 **`can(0)/general(1)/pet(2)`** 로 고정됩니다. `common/schema.py`의 `CLASS_NAMES`, `dataset/data.yaml`의 `names`를 이 순서로 맞추세요.
 
 > **클래스는 3개로 고정합니다.** 유리병·종이류를 추가하고 싶어도 참으세요. 클래스가 늘면 필요한 이미지 수가 비례해서 늘고, 9일 일정에서 라벨링에 잡아먹힙니다. 확장은 보고서 "향후 과제"로 서술합니다.
 
@@ -128,7 +130,7 @@ from dataclasses import dataclass, field
 from typing import Literal, Optional
 import time
 
-Category = Literal["pet", "can", "general"]
+Category = Literal["can", "general", "pet"]
 BinName  = Literal["blue_bin", "green_bin", "gray_bin"]
 
 # 클래스 → 수거함 매핑 (단일 진실 공급원)
@@ -139,14 +141,15 @@ CATEGORY_TO_BIN: dict[Category, BinName] = {
 }
 
 # 학습 시 클래스 ID 순서 — data.yaml과 반드시 일치시킬 것
-CLASS_NAMES: list[Category] = ["pet", "can", "general"]
+# ★ Roboflow가 클래스를 알파벳순으로 강제 정렬해서 내보내므로 can/general/pet 순서
+CLASS_NAMES: list[Category] = ["can", "general", "pet"]
 
 
 @dataclass
 class Detection:
     """① 비전 → ② 통합 으로 전달되는 단위 데이터"""
     category: Category          # 판별된 클래스
-    class_id: int               # 0=pet, 1=can, 2=general
+    class_id: int               # 0=can, 1=general, 2=pet (Roboflow 알파벳순)
     pixel_x: int                # 바운딩박스 중심 x (0~639)
     pixel_y: int                # 바운딩박스 중심 y (0~479)
     confidence: float           # 0.0 ~ 1.0
@@ -574,6 +577,8 @@ cv2.destroyAllWindows()
 | CVAT | 웹/로컬 | 기능 풍부 | 3명·300장 규모엔 과합니다 |
 
 > **Roboflow를 1순위로 두는 이유:** 노트북에서 애플리케이션 제어 정책 차단 이력이 있으므로, 브라우저에서 도는 도구가 리스크가 가장 적습니다. 게다가 3명이 계정을 공유해 동시에 라벨링할 수 있어 작업 시간이 1/3로 줄어듭니다.
+>
+> **★ 주의 — 클래스 순서:** Roboflow는 export 시 클래스를 **알파벳순으로 강제 정렬**합니다. 라벨링 UI에 pet/can/general 순서로 클래스를 등록했더라도, 내려받은 `data.yaml`의 `names`는 `can(0) → general(1) → pet(2)` 순서로 나옵니다. `common/schema.py`의 `CLASS_NAMES`를 이 순서와 다르게 두면 "모델도 코드도 정상인데 페트를 캔으로 분류하는" 버그가 납니다. Export 직후 두 파일을 나란히 대조하세요.
 
 **라벨링 규칙 (3명이 동일하게 지켜야 함)**
 
@@ -613,12 +618,14 @@ test: images/test
 
 nc: 3
 names:
-  0: pet
-  1: can
-  2: general
+  0: can
+  1: general
+  2: pet
 ```
 
 > `names`의 순서가 `common/schema.py`의 `CLASS_NAMES`와 **반드시 일치**해야 합니다. 어긋나면 페트를 캔으로 분류하는 버그가 나고, 원인 찾기가 매우 어렵습니다.
+>
+> ★ 위 순서(`can/general/pet`)는 임의로 정한 게 아니라 **Roboflow가 export 시 클래스를 알파벳순으로 강제 정렬**하기 때문입니다. Roboflow에서 내려받은 `data.yaml`을 그대로 쓰세요.
 
 ### 5.6 학습
 

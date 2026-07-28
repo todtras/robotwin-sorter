@@ -4,6 +4,10 @@
 #   어긋나면 페트병을 캔으로 분류하는 버그가 나는데, 모델도 코드도 정상이라
 #   원인 찾는 데 반나절이 날아갑니다. 학습 직전에 두 파일을 나란히 대조하세요.
 #
+# ★ Roboflow는 클래스를 알파벳 순으로 강제 정렬해서 내보냅니다 (can/general/pet).
+#   pet/can/general 순서로 라벨링했더라도 export된 data.yaml은 이 순서로 나오니,
+#   Roboflow가 내려준 순서를 그대로 쓰고 임의로 바꾸지 마세요.
+#
 # Colab에서 학습할 때는 path를 /content/dataset 으로 바꿔야 합니다.
 
 path: ../dataset
@@ -13,6 +17,6 @@ test: images/test
 
 nc: 3
 names:
-  0: pet
-  1: can
-  2: general
+  0: can
+  1: general
+  2: pet

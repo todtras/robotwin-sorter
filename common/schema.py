@@ -44,7 +44,7 @@ from typing import Literal, Optional
 # Literal을 쓰는 이유: 그냥 str로 두면 "pet"을 "PET"이나 "petbottle"로 잘못 적어도
 # 실행 시점까지 아무도 모릅니다. Literal로 좁혀두면 IDE와 타입 체커가 바로 잡아줍니다.
 
-Category = Literal["pet", "can", "general"]
+Category = Literal["can", "general", "pet"]
 """검출 대상 클래스. 3개로 고정. 유리/종이 추가 금지 (9일 일정에 라벨링이 안 끝남)."""
 
 BinName = Literal["blue_bin", "green_bin", "gray_bin"]
@@ -67,12 +67,16 @@ FailReason = Literal[
 # 2. 클래스 매핑 (단일 진실 공급원, Single Source of Truth)
 # ---------------------------------------------------------------------------
 
-CLASS_NAMES: list[Category] = ["pet", "can", "general"]
+CLASS_NAMES: list[Category] = ["can", "general", "pet"]
 """YOLO 클래스 ID -> 클래스명 매핑.
 
-    CLASS_NAMES[0] == "pet"
-    CLASS_NAMES[1] == "can"
-    CLASS_NAMES[2] == "general"
+    CLASS_NAMES[0] == "can"
+    CLASS_NAMES[1] == "general"
+    CLASS_NAMES[2] == "pet"
+
+★ 이 순서는 pet/can/general이 아니라 can/general/pet입니다. Roboflow가
+클래스를 알파벳순으로 강제 정렬해서 내보내기 때문에 실제 학습 데이터의
+클래스 ID가 이 순서로 고정됩니다. "논리적인 순서"로 임의로 바꾸지 마세요.
 
 ★ 경고: dataset/data.yaml의 `names` 순서와 반드시 일치해야 합니다.
 어긋나면 페트병을 캔으로 분류하는 버그가 나는데, 모델도 정상이고 코드도
@@ -129,7 +133,7 @@ class Detection:
 
         Detection(
             category="pet",
-            class_id=0,
+            class_id=2,
             pixel_x=320, pixel_y=240,
             confidence=0.87,
             bbox=(280, 200, 360, 280),
@@ -140,7 +144,8 @@ class Detection:
     """판별된 클래스명. CLASS_NAMES[class_id]와 항상 같아야 합니다."""
 
     class_id: int
-    """YOLO가 뱉은 원본 클래스 ID. 0=pet, 1=can, 2=general."""
+    """YOLO가 뱉은 원본 클래스 ID. 0=can, 1=general, 2=pet.
+    (Roboflow가 알파벳순으로 강제 정렬한 순서입니다.)"""
 
     pixel_x: int
     """바운딩박스 **중심**의 x 좌표. 범위 0 ~ 639.
