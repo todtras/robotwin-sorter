@@ -17,7 +17,7 @@ PyBullet 가상 환경의 로봇팔이 해당 분리수거함으로 자동 투�
 ## 빠른 시작
 
 ```bash
-git clone <저장소 주소>
+git clone https://github.com/todtras/robotwin-sorter.git
 cd robotwin-sorter
 
 python -m venv .venv
