@@ -118,6 +118,7 @@ robotwin-sorter/
 | `feat/vision` | 주연 | `vision/`, `tools/` |
 | `feat/integration` | 선우 | `integration/`, `common/logger.py` |
 
+예시) !! feat/robot이나 폴더 robot/을 feat/vision, vision/ 등 자기 브랜치에 맞게 수정해서 사용 !!
 ```bash
 git checkout -b feat/robot        # 최초 1회
 git add robot/
