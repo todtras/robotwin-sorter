@@ -26,7 +26,8 @@ class Calibrator:
         """
         self.image_points = image_points
         self.world_points = world_points
-        self.H = None
+        self.H = cv2.getPerspectiveTransform(
+            np.float32(image_points), np.float32(world_points))
 
     def pixel_to_world(self, px: int, py: int) -> tuple[float, float]:
         """픽셀 좌표 -> 월드 좌표 (미터).
@@ -36,7 +37,9 @@ class Calibrator:
             out = cv2.perspectiveTransform(pt, self.H)
             return float(out[0][0][0]), float(out[0][0][1])
         """
-        raise NotImplementedError
+        pt = np.float32([[[px, py]]])
+        out = cv2.perspectiveTransform(pt, self.H)
+        return float(out[0][0][0]), float(out[0][0][1])
 
     def is_in_workspace(self, x: float, y: float) -> bool:
         """월드 좌표가 로봇 작업영역 안인지 확인.
@@ -47,10 +50,12 @@ class Calibrator:
 
         False면 스폰하지 말고 fail_reason="out_of_workspace"로 기록하세요.
         """
-        raise NotImplementedError
+        return (config.WORKSPACE_X[0] <= x <= config.WORKSPACE_X[1]
+                    and config.WORKSPACE_Y[0] <= y <= config.WORKSPACE_Y[1])
 
     def measure_error(self, px: int, py: int,
                       true_xy: tuple[float, float]) -> float:
         """실측 위치와의 오차(미터) 반환. 실험 2의 측정 함수입니다.
         목표: config.CALIB_ERROR_TOLERANCE_M(2cm) 이내."""
-        raise NotImplementedError
+        wx, wy = self.pixel_to_world(px, py)
+        return ((wx - true_xy[0]) ** 2 + (wy - true_xy[1]) ** 2) ** 0.5
