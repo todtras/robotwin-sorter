@@ -1,0 +1,18 @@
+# dataset/data.yaml — YOLO 학습 설정
+#
+# ★★★ names의 순서는 common/schema.py의 CLASS_NAMES와 반드시 일치 ★★★
+#   어긋나면 페트병을 캔으로 분류하는 버그가 나는데, 모델도 코드도 정상이라
+#   원인 찾는 데 반나절이 날아갑니다. 학습 직전에 두 파일을 나란히 대조하세요.
+#
+# Colab에서 학습할 때는 path를 /content/dataset 으로 바꿔야 합니다.
+
+path: ../dataset
+train: images/train
+val: images/val
+test: images/test
+
+nc: 3
+names:
+  0: pet
+  1: can
+  2: general

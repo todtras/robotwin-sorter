@@ -1,0 +1,29 @@
+# ── 데이터셋 (★ 절대 커밋 금지) ─────────────────────────────
+# 수백 MB짜리가 히스토리에 박히면 되돌리기가 매우 번거롭습니다.
+# 팀원 간 공유는 Google Drive 또는 Roboflow로 하고,
+# README에 다운로드 링크를 적어두세요.
+dataset/raw/
+dataset/images/
+dataset/labels/
+*.zip
+
+# 학습 산출물
+runs/
+*.pt
+!models/best.pt          # 최종 가중치(약 6MB)는 예외로 커밋 허용
+
+# 실험 로그 (재생성 가능)
+data/logs/*.csv
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+
+# 에디터 / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
