@@ -59,6 +59,14 @@ class Scene:
 
         self._spawn_bins()  # 수거함 3개 배치
 
+        if self.use_gui:
+            p.resetDebugVisualizerCamera(
+                cameraDistance=config.SIM_CAMERA_DISTANCE,
+                cameraYaw=config.SIM_CAMERA_YAW,
+                cameraPitch=config.SIM_CAMERA_PITCH,
+                cameraTargetPosition=config.SIM_CAMERA_TARGET,
+            )
+
         return self.client_id, self.plane_id, self.robot_id
 
     def _spawn_bins(self) -> None:
@@ -72,6 +80,11 @@ class Scene:
                                      baseVisualShapeIndex=vis,
                                      basePosition=pos)
             self.bin_ids[name] = body
+
+            if self.use_gui:
+                label_pos = (pos[0], pos[1], pos[2] + config.BIN_HALF_EXTENTS[2] + 0.02)
+                p.addUserDebugText(config.BIN_LABELS[name], label_pos,
+                                    textColorRGB=[1, 1, 1], textSize=1.5)
 
 
     def step(self, n: int = 1) -> None:

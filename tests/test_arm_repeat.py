@@ -34,6 +34,15 @@ def run_repeat(n: int = N_RUNS, use_gui: bool = False) -> None:
         body_id = spawn_test_object(task.target_xyz)
         task = dataclasses.replace(task, body_id=body_id)
 
+        label_id = None
+        if use_gui:
+            # parentObjectUniqueId를 주면 텍스트 위치가 그 body 기준 로컬
+            # 좌표가 되어, 물체가 들려서 움직여도 텍스트가 따라다님.
+            local_offset = (0, 0, config.OBJECT_HALF_EXTENT + 0.02)
+            label_id = p.addUserDebugText(config.BIN_LABELS[task.target_bin], local_offset,
+                                           textColorRGB=[1, 1, 0], textSize=1.5,
+                                           parentObjectUniqueId=body_id, parentLinkIndex=-1)
+
         ok = controller.execute_task(task)
         fail_reason = controller.last_result.fail_reason if controller.last_result else None
         results.append((ok, fail_reason))
@@ -43,6 +52,8 @@ def run_repeat(n: int = N_RUNS, use_gui: bool = False) -> None:
               f"ok={ok} fail_reason={fail_reason}")
 
         p.removeBody(body_id)  # 다음 반복과 안 겹치게 정리
+        if label_id is not None:
+            p.removeUserDebugItem(label_id)
 
     scene.disconnect()
 

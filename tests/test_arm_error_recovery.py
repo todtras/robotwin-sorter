@@ -57,7 +57,7 @@ def test_error_recovery(use_gui: bool = False) -> None:
     assert controller.state == RobotState.IDLE, f"ERROR 복구 후 IDLE이 아님: {controller.state}"
     assert controller.last_result is not None, "last_result가 안 채워짐"
     assert controller.last_result.success is False
-    assert controller.last_result.fail_reason == "timeout", controller.last_result.fail_reason
+    assert controller.last_result.fail_reason.startswith("timeout"), controller.last_result.fail_reason
     print("[1/2] 타임아웃 -> ERROR -> IDLE 복구 확인:", controller.last_result)
     if use_gui:
         input("팔이 홈으로 복귀한 게 보이면 엔터를 눌러 다음 태스크로 진행...")

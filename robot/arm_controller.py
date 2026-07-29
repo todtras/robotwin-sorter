@@ -118,19 +118,12 @@ class ArmController:
                 return False
 
     def settle(self, steps: int = config.SETTLE_STEPS) -> None:
-        """관절 목표는 그대로 둔 채 steps번 더 stepSimulation().
-
-        move_to()는 목표 근처(POSITION_TOLERANCE)에 들어오자마자 바로
-        return하는데, 그 시점에 아직 잔여 속도가 남아있을 수 있음.
-        time.sleep()은 물리 시간을 안 흘려서 이 용도로는 무의미 —
-        반드시 stepSimulation()을 더 호출해야 관성이 죽음.
-        """
+        """관절 목표는 그대로 둔 채 steps번 더 stepSimulation(). 위치 도달 후 물체를 바로 놓으면 관성으로 인해 날라감"""
         for _ in range(steps):
             p.stepSimulation()
             if self.use_gui:
                 time.sleep(config.SIM_TIMESTEP * config.SIM_SLOWDOWN)
 
-    # -- Day 2 오후 --------------------------------------------------------
     def grasp(self, body_id: int) -> bool:
         """물체를 집습니다 (제약 기반).
 
@@ -168,18 +161,14 @@ class ArmController:
 
     def go_home(self) -> bool:
         """config.HOME_POSITION으로 복귀. ERROR 복구 시에도 호출됩니다."""
+
         return self.move_to(config.HOME_POSITION, timeout=config.MOVE_TIMEOUT_SEC)
 
-    # -- Day 3 오전 --------------------------------------------------------
     def execute_task(self, task: SortTask) -> bool:
-        """★ 최종 산출물. FSM을 한 바퀴 돌려 분류를 완수합니다.
+        """FSM을 한 바퀴 돌려 분류를 완수합니다.
 
           IDLE -> APPROACH -> DESCEND -> GRASP -> LIFT
                -> MOVE_TO_BIN -> RELEASE -> RETURN -> IDLE
-
-        반환은 계약대로 bool만. 로봇이 아는 만큼의 SortResult(성공 여부,
-        fail_reason, t_ik_ms, t_execute_ms)는 self.last_result에 채워두니
-        pipeline이 t_capture_ms 등 나머지를 채워서 완성합니다.
         """
         x, y, z = task.target_xyz
         bin_xyz = config.BIN_POSITIONS[task.target_bin]
@@ -260,7 +249,7 @@ class ArmController:
                             t_ik_ms=self._ik_time_ms,
                             t_execute_ms=(time.time() - start_time) * 1000,
                         )
-                        # 나머지 필드(t_capture_ms 등)는 pipeline이 채웁니다.
+                        # 나머지 필드(t_capture_ms 등)는 pipeline이 채움.
 
                         return True
 
@@ -268,10 +257,7 @@ class ArmController:
                     self.state = RobotState.ERROR
 
                 case RobotState.ERROR:
-                    # GRASP 이후(LIFT/MOVE_TO_BIN/RETURN)에 실패했으면 물체가
-                    # 아직 팔에 용접된 상태. 안 놓으면 홈 복귀 중 끌려오고,
-                    # 다음 태스크의 grasp()가 이전 물체 위에 또 얹힘.
-                    self.release()
+                    self.release()  # 오류 발생시 물체 놓음
                     self.go_home()
                     self.state = RobotState.IDLE
 
@@ -282,6 +268,6 @@ class ArmController:
                         t_ik_ms=self._ik_time_ms,
                         t_execute_ms=(time.time() - start_time) * 1000,
                     )
-                    # 나머지 필드(t_capture_ms 등)는 pipeline이 채웁니다.
+                    # 나머지 필드(t_capture_ms 등)는 pipeline이 채움.
 
                     return False
