@@ -79,7 +79,7 @@ class Scene:
         for _ in range(n):
             p.stepSimulation()
             if self.use_gui:
-                time.sleep(1 / 240)  # GUI 모드에서는 240Hz로 시뮬레이션
+                time.sleep(config.SIM_TIMESTEP * config.SIM_SLOWDOWN)  # GUI 재생 배속 조절
 
     def disconnect(self) -> None:
         """p.disconnect(). 프로그램 종료 시 반드시 호출."""
