@@ -40,18 +40,39 @@ class ArmController:
         fail_reason, t_ik_ms, t_execute_ms)만 채워져 있음 — 나머지
         (t_capture_ms 등)는 pipeline이 자기 몫을 채워서 완성합니다."""
 
+        # calculateInverseKinematics()에 관절 한계를 안 알려주면 물리적으로
+        # 불가능한 각도를 계산해버릴 수 있음(그러면 위치 제어기가 한계에서
+        # 멈춰서 영원히 목표에 못 감). null-space 방식을 쓰려면 필요.
+        num_joints = p.getNumJoints(self.robot_id)
+        self._joint_lower = []
+        self._joint_upper = []
+        self._joint_ranges = []
+        for i in range(num_joints):
+            info = p.getJointInfo(self.robot_id, i)
+            self._joint_lower.append(info[8])
+            self._joint_upper.append(info[9])
+            self._joint_ranges.append(info[9] - info[8])
+
     def move_to(self, xyz: tuple[float, float, float],
                 timeout: float = config.MOVE_TIMEOUT_SEC) -> bool:
         """목표 위치로 이동. 도달하면 True, 실패/타임아웃이면 False."""
 
         # IK : 해당 위치로 이동하기 위한 관절 각도를 계산하는 것.
         # return 값 : 7개의 관절 각도 리스트
+        # 관절 한계(lowerLimits/upperLimits/jointRanges)와 현재 자세(restPoses)를
+        # 같이 넘겨서 null-space 방식으로 풀게 함. 안 그러면 한계 밖 각도가
+        # 나올 수 있고, 그러면 위치 제어기가 한계에 걸려서 영원히 멈춤.
+        rest_poses = [p.getJointState(self.robot_id, i)[0] for i in range(len(self._joint_lower))]
         ik_start = time.time()
         ik = p.calculateInverseKinematics(
             bodyUniqueId=self.robot_id,
             endEffectorLinkIndex=self.ee_index,
             targetPosition=xyz,
             targetOrientation=p.getQuaternionFromEuler([0, 3.14159, 0]),    # 그리퍼가 수직 아래를 보게하는 자세
+            lowerLimits=self._joint_lower,
+            upperLimits=self._joint_upper,
+            jointRanges=self._joint_ranges,
+            restPoses=rest_poses,
             maxNumIterations=config.IK_MAX_ITERATIONS,
             residualThreshold=config.IK_RESIDUAL_THRESHOLD
         )
@@ -70,10 +91,11 @@ class ArmController:
                 force=config.JOINT_FORCE
             )
 
-        start_time = time.time()
+        elapsed_sim_time = 0.0
 
         while True:
             p.stepSimulation()  # 실제 시뮬레이션을 한 스텝 진행. 이걸 안 하면 팔이 움직이지 않음
+            elapsed_sim_time += config.SIM_TIMESTEP
             if self.use_gui:
                 time.sleep(config.SIM_TIMESTEP * config.SIM_SLOWDOWN)  # GUI 재생 배속 조절 (Scene.step()과 동일)
 
@@ -89,9 +111,24 @@ class ArmController:
             if distance < config.POSITION_TOLERANCE:
                 return True
 
-            # 타임아웃 체크 : 지정된 시간 초과 시 False 반환
-            if time.time() - start_time > timeout:
+            # 타임아웃 체크: 시뮬레이션된 시간 기준(실제 시계 아님).
+            # wall-clock으로 재면 SIM_SLOWDOWN 때문에 GUI에서 재생 배속을
+            # 늦출수록 로봇에게 주어지는 물리적 시도 시간이 줄어드는 버그가 생김.
+            if elapsed_sim_time > timeout:
                 return False
+
+    def settle(self, steps: int = config.SETTLE_STEPS) -> None:
+        """관절 목표는 그대로 둔 채 steps번 더 stepSimulation().
+
+        move_to()는 목표 근처(POSITION_TOLERANCE)에 들어오자마자 바로
+        return하는데, 그 시점에 아직 잔여 속도가 남아있을 수 있음.
+        time.sleep()은 물리 시간을 안 흘려서 이 용도로는 무의미 —
+        반드시 stepSimulation()을 더 호출해야 관성이 죽음.
+        """
+        for _ in range(steps):
+            p.stepSimulation()
+            if self.use_gui:
+                time.sleep(config.SIM_TIMESTEP * config.SIM_SLOWDOWN)
 
     # -- Day 2 오후 --------------------------------------------------------
     def grasp(self, body_id: int) -> bool:
@@ -160,7 +197,7 @@ class ArmController:
                         self.state = RobotState.DESCEND
                         t_approach_ms = (time.time() - start_time) * 1000
                     else:
-                        fail_reason = "timeout"
+                        fail_reason = "timeout : approach"
                         self.state = RobotState.ERROR
 
                 case RobotState.DESCEND:
@@ -171,7 +208,7 @@ class ArmController:
                         self.state = RobotState.GRASP
                         t_descend_ms = (time.time() - start_time) * 1000
                     else:
-                        fail_reason = "timeout"
+                        fail_reason = "timeout : descend"
                         self.state = RobotState.ERROR
 
                 case RobotState.GRASP:
@@ -189,7 +226,7 @@ class ArmController:
                         self.state = RobotState.MOVE_TO_BIN
                         t_lift_ms = (time.time() - start_time) * 1000
                     else:
-                        fail_reason = "timeout"
+                        fail_reason = "timeout : lift"
                         self.state = RobotState.ERROR
 
                 case RobotState.MOVE_TO_BIN:
@@ -197,13 +234,15 @@ class ArmController:
                     # DESCEND와 같은 이유로 바닥과 충돌함. LIFT 높이를 유지한 채
                     # 통 상공으로 수평 이동만 하고, 물체는 RELEASE에서 낙하시킴.
                     if self.move_to((bin_xyz[0], bin_xyz[1], z + config.LIFT_HEIGHT), timeout=config.MOVE_TIMEOUT_SEC):
+                        
                         self.state = RobotState.RELEASE
                         t_move_to_bin_ms = (time.time() - start_time) * 1000
                     else:
-                        fail_reason = "timeout"
+                        fail_reason = "timeout : move_to_bin"
                         self.state = RobotState.ERROR
 
                 case RobotState.RELEASE:
+                    self.settle()  # 바로 놓으면 관성으로 인해 물체가 날라감. 안정화 시간
                     self.release()
                     t_release_ms = (time.time() - start_time) * 1000
 
@@ -225,10 +264,14 @@ class ArmController:
 
                         return True
 
-                    fail_reason = "timeout"
+                    fail_reason = "timeout : return"
                     self.state = RobotState.ERROR
 
                 case RobotState.ERROR:
+                    # GRASP 이후(LIFT/MOVE_TO_BIN/RETURN)에 실패했으면 물체가
+                    # 아직 팔에 용접된 상태. 안 놓으면 홈 복귀 중 끌려오고,
+                    # 다음 태스크의 grasp()가 이전 물체 위에 또 얹힘.
+                    self.release()
                     self.go_home()
                     self.state = RobotState.IDLE
 
