@@ -9,7 +9,10 @@ common/logger.py — 실험 CSV 로깅
 from __future__ import annotations
 
 from pathlib import Path
-
+import csv
+import time
+from datetime import datetime
+from pathlib import Path
 import config
 from common.schema import Detection, FailReason, SortResult, SortTask
 
@@ -28,7 +31,16 @@ class SortLogger:
           - 헤더 한 줄(config.CSV_COLUMNS) 먼저 기록
         """
         self.log_dir = log_dir
-        self.path: Path | None = None
+        self.log_dir.mkdir(parents=True, exist_ok=True)
+
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        self.path = self.log_dir / f"run_{timestamp}.csv"
+
+        with open(self.path, "w", newline="",encoding="utf-8") as f:
+          writer = csv.writer(f)
+          writer.writerow(config.CSV_COLUMNS)
+
+        
 
     def record(self, result: SortResult) -> None:
         """한 사이클 결과를 기록.
@@ -36,15 +48,69 @@ class SortLogger:
         TODO(선우): SortResult에서 값을 뽑아 config.CSV_COLUMNS 순서로 씁니다.
           result.task.source가 None일 수 있으니 픽셀 좌표는 None 체크 필요.
         """
-        raise NotImplementedError
+        source = result.task.source
+        row = [
+            time.time(),
+            result.task.category,
+            source.class_id if source else "",
+            source.confidence if source else "",
+            source.pixel_x if source else "",
+            source.pixel_y if source else "",
+            result.task.target_xyz[0],
+            result.task.target_xyz[1],
+            result.t_capture_ms,
+            result.t_detect_ms,
+            result.t_transform_ms,
+            result.t_ik_ms,
+            result.t_execute_ms,
+            result.t_total_ms,
+            result.success,
+            result.fail_reason or "",
+        ]
+        with open(self.path, "a", newline="", encoding="utf-8") as f:
+          writer = csv.writer(f)
+          writer.writerow(row)
 
     def record_failure(self, detection: Detection, reason: FailReason) -> None:
         """로봇까지 못 간 실패(작업영역 밖 등)를 기록.
 
         ★ 이런 케이스를 빼먹으면 실험 5의 실패 사유 분포가 왜곡됩니다.
         """
-        raise NotImplementedError
+        row = [
+            time.time(),
+            detection.category,
+            detection.class_id,
+            detection.confidence,
+            detection.pixel_x,
+            detection.pixel_y,
+            "", "",                  # world_x, world_y (변환 전 실패)
+            0, 0, 0, 0, 0, 0,       # 시간 측정값 없음
+            False,
+            reason,
+        ]
+        with open(self.path, "a", newline="", encoding="utf-8") as f:
+          writer = csv.writer(f)
+          writer.writerow(row)
 
     def summary(self) -> dict:
         """성공률과 실패 사유별 개수를 집계. 발표 슬라이드에 바로 씁니다."""
-        raise NotImplementedError
+        total = 0
+        success_count = 0
+        fail_reasons: dict[str, int] = {}
+
+        with open(self.path, "r", encoding="utf-8") as f:
+          reader = csv.DictReader(f)
+          for row in reader:
+            total += 1
+            if row["success"] == "True":
+              success_count += 1
+            else:
+              reason = row["fail_reason"]
+              fail_reasons[reason] = fail_reasons.get(reason, 0) + 1
+
+        return {
+          "total": total,
+          "success": success_count,
+          "success_rate": success_count / total if total > 0 else 0.0,
+          "fail_reasons": fail_reasons,
+        }

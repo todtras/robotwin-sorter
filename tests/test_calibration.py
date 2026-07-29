@@ -7,9 +7,10 @@ tests/test_calibration.py — 좌표 변환 검증
 """
 
 from __future__ import annotations
-
+from integration.calibration import Calibrator
 import config
-
+import cv2
+import numpy as np
 
 def test_corners_map_correctly() -> None:
     """캘리브레이션에 쓴 네 귀퉁이는 대응 월드 좌표로 정확히 변환돼야 합니다.
@@ -19,7 +20,12 @@ def test_corners_map_correctly() -> None:
 
     여기서 틀리면 호모그래피 대응점 순서가 어긋난 것입니다.
     """
-    raise NotImplementedError
+    cal = Calibrator()
+    for img_pt, world_pt in zip(config.CALIB_IMAGE_POINTS, config.CALIB_WORLD_POINTS):
+      wx, wy = cal.pixel_to_world(img_pt[0], img_pt[1])
+      error = ((wx - world_pt[0]) ** 2 + (wy - world_pt[1]) ** 2) ** 0.5
+      assert error < 0.001, f"오차 {error:.4f}m at {img_pt}"
+      print(f"  {img_pt} -> ({wx:.4f}, {wy:.4f}) OK")
 
 
 def test_workspace_bounds() -> None:
@@ -29,7 +35,12 @@ def test_workspace_bounds() -> None:
       - 중앙점 (0.5, 0.0) -> True
       - 영역 밖 (1.0, 0.0) -> False
     """
-    raise NotImplementedError
+    cal = Calibrator()
+    assert cal.is_in_workspace(0.5, 0.0) == True
+    assert cal.is_in_workspace(1.0, 0.0) == False
+    assert cal.is_in_workspace(0.35, -0.25) == True
+    assert cal.is_in_workspace(0.34, 0.0) == False
+    print("  작업영역 판정 OK")
 
 
 def measure_grid_error() -> None:
