@@ -9,7 +9,8 @@ tests/test_calibration.py — 좌표 변환 검증
 from __future__ import annotations
 from integration.calibration import Calibrator
 import config
-
+import cv2
+import numpy as np
 
 def test_corners_map_correctly() -> None:
     """캘리브레이션에 쓴 네 귀퉁이는 대응 월드 좌표로 정확히 변환돼야 합니다.

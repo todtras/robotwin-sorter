@@ -7,7 +7,8 @@ integration/calibration.py — 픽셀 -> 월드 좌표 변환
 """
 
 from __future__ import annotations
-
+import cv2
+import numpy as np
 import config
 
 
