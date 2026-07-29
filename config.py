@@ -267,9 +267,18 @@ JOINT_FORCE = 500.0
 너무 작으면 팔이 중력에 져서 목표에 도달하지 못합니다.
 "IK는 계산되는데 팔이 안 간다"면 이 값을 먼저 의심하세요."""
 
-POSITION_TOLERANCE = 0.01
-"""도달 판정 허용 오차(미터). 1cm.
-p.getLinkState()로 읽은 실제 위치와 목표의 거리가 이 값 이내면 도달."""
+POSITION_TOLERANCE = 0.015
+"""도달 판정 허용 오차(미터). 1.5cm.
+p.getLinkState()로 읽은 실제 위치와 목표의 거리가 이 값 이내면 도달.
+
+★ 0.001(1mm)로 낮췄더니 물체를 문 상태에서의 관성 등 미세한 오차에도
+  실패로 판정돼서 10회 중 1회만 성공했습니다. 1.5cm면 충분합니다."""
+
+SETTLE_STEPS = 50
+"""RELEASE 직전 제자리 유지 스텝 수 (약 SETTLE_STEPS/240초).
+move_to()가 tolerance 안에 들어오면 바로 return하는데, 그 순간 팔/물체가
+아직 관성으로 움직이고 있을 수 있음. 목표 위치를 유지한 채로
+stepSimulation()만 더 돌려서 속도를 죽인 뒤 놓아야 물체가 안 튐."""
 
 MOVE_TIMEOUT_SEC = 5.0
 """이동 타임아웃(초). 초과하면 False 반환 후 ERROR 상태로 전이.
@@ -285,6 +294,15 @@ SIM_TIMESTEP = 1.0 / 240.0
 USE_GUI = True
 """True면 p.GUI(창 띄움), False면 p.DIRECT(창 없이 계산만).
 창이 안 뜨는 환경이면 False로 두고 p.getCameraImage()로 확인하세요."""
+
+SIM_SLOWDOWN = 3
+"""GUI 재생 배속 조절용. Scene.step()/ArmController.move_to()가
+time.sleep(SIM_TIMESTEP * SIM_SLOWDOWN)만큼 쉽니다.
+
+JOINT_FORCE가 세서 실제 240Hz(=1.0)로는 순식간에 목표에 수렴해버려
+눈으로 보기 힘듭니다. 값을 키우면 더 느려지고(관찰용), 1.0이면
+물리적으로 정확한 실시간, 실험 자동화(Day 7)처럼 빨리 돌리고 싶으면
+0에 가깝게 낮추세요."""
 
 
 # ===========================================================================
