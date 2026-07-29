@@ -135,8 +135,12 @@ DUPLICATE_RADIUS_M = 0.05
 #           |     |    작업 영역        |
 #           |     +---------------------+
 
-WORKSPACE_X = (0.35, 0.65)
-"""작업 영역 X 범위(미터). 웹캠이 비추는 책상 구역에 대응."""
+WORKSPACE_X = (0.4, 0.65)
+"""작업 영역 X 범위(미터). 웹캠이 비추는 책상 구역에 대응.
+
+★ 하한을 0.35 -> 0.4로 올림. 0.35~0.38 근처는 그리퍼 수직 고정
+  자세에서 4번 관절이 하한(-2.0944rad)에 박혀 도달 불가한 사각지대였음
+  (100회 더미 테스트 실패 4건 전부 이 구간에서 나옴)."""
 
 WORKSPACE_Y = (-0.25, 0.25)
 """작업 영역 Y 범위(미터)."""
@@ -216,6 +220,13 @@ BIN_COLORS: dict[BinName, list[float]] = {
 BIN_HALF_EXTENTS = [0.08, 0.08, 0.05]
 """수거함 박스 크기(half extent). 가로세로 16cm, 높이 10cm."""
 
+BIN_LABELS: dict[BinName, str] = {
+    "blue_bin": "PET",
+    "green_bin": "CAN",
+    "gray_bin": "GEN",
+}
+"""GUI에서 수거함 윗면에 띄울 텍스트. 색만으로 헷갈리지 않게."""
+
 CATEGORY_COLORS: dict[Category, list[float]] = {
     "pet": [0.2, 0.4, 1.0, 1.0],
     "can": [0.2, 0.8, 0.3, 1.0],
@@ -267,9 +278,18 @@ JOINT_FORCE = 500.0
 너무 작으면 팔이 중력에 져서 목표에 도달하지 못합니다.
 "IK는 계산되는데 팔이 안 간다"면 이 값을 먼저 의심하세요."""
 
-POSITION_TOLERANCE = 0.01
-"""도달 판정 허용 오차(미터). 1cm.
-p.getLinkState()로 읽은 실제 위치와 목표의 거리가 이 값 이내면 도달."""
+POSITION_TOLERANCE = 0.015
+"""도달 판정 허용 오차(미터). 1.5cm.
+p.getLinkState()로 읽은 실제 위치와 목표의 거리가 이 값 이내면 도달.
+
+★ 0.001(1mm)로 낮췄더니 물체를 문 상태에서의 관성 등 미세한 오차에도
+  실패로 판정돼서 10회 중 1회만 성공했습니다. 1.5cm면 충분합니다."""
+
+SETTLE_STEPS = 50
+"""RELEASE 직전 제자리 유지 스텝 수 (약 SETTLE_STEPS/240초).
+move_to()가 tolerance 안에 들어오면 바로 return하는데, 그 순간 팔/물체가
+아직 관성으로 움직이고 있을 수 있음. 목표 위치를 유지한 채로
+stepSimulation()만 더 돌려서 속도를 죽인 뒤 놓아야 물체가 안 튐."""
 
 MOVE_TIMEOUT_SEC = 5.0
 """이동 타임아웃(초). 초과하면 False 반환 후 ERROR 상태로 전이.
@@ -285,6 +305,32 @@ SIM_TIMESTEP = 1.0 / 240.0
 USE_GUI = True
 """True면 p.GUI(창 띄움), False면 p.DIRECT(창 없이 계산만).
 창이 안 뜨는 환경이면 False로 두고 p.getCameraImage()로 확인하세요."""
+
+SIM_SLOWDOWN = 3
+"""GUI 재생 배속 조절용. Scene.step()/ArmController.move_to()가
+time.sleep(SIM_TIMESTEP * SIM_SLOWDOWN)만큼 쉽니다.
+
+JOINT_FORCE가 세서 실제 240Hz(=1.0)로는 순식간에 목표에 수렴해버려
+눈으로 보기 힘듭니다. 값을 키우면 더 느려지고(관찰용), 1.0이면
+물리적으로 정확한 실시간, 실험 자동화(Day 7)처럼 빨리 돌리고 싶으면
+0에 가깝게 낮추세요."""
+
+SIM_CAMERA_DISTANCE = 2
+"""GUI 시작 시 카메라-타겟 거리(미터). 작을수록 확대(줌인)."""
+
+SIM_CAMERA_YAW = 175
+"""GUI 시작 시 카메라 좌우 회전각(도). 로봇을 정면 아닌 대각선에서 보게 함."""
+
+SIM_CAMERA_PITCH = -30
+"""GUI 시작 시 카메라 상하 각도(도). 음수면 위에서 내려다봄."""
+
+SIM_CAMERA_TARGET = (0, 0, 0)
+"""GUI 시작 시 카메라가 바라보는 지점(월드 좌표). 로봇과 수거함 사이
+중간쯤으로 잡아서 작업영역 전체가 화면에 들어오게 함.
+
+★ Day 8 데모 영상 촬영 때 이 세 값(DISTANCE/YAW/PITCH)과 TARGET을
+  조정해서 원하는 앵글을 잡으세요. GUI 창에서 마우스로 돌려본 뒤
+  마음에 드는 값으로 여기 갱신하면 다음 실행부터 그 앵글로 시작합니다."""
 
 
 # ===========================================================================
