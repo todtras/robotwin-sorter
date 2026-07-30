@@ -1,6 +1,6 @@
 """
 robot/fsm.py — 로봇 상태 기계
-담당: 김태익 | Day 3 오전
+담당: 김태익
 
 한 번의 분류 작업을 9개 상태로 쪼갭니다. 상태를 안 나누고 순차 코드로 짜면
 "어디서 실패했는지"를 로그에 남길 수 없어 실험 데이터가 나오지 않습니다.
@@ -9,7 +9,6 @@ robot/fsm.py — 로봇 상태 기계
 from __future__ import annotations
 
 from enum import Enum, auto
-
 
 class RobotState(Enum):
     """로봇 상태.
