@@ -58,7 +58,28 @@ class Pipeline:
         return False
 
     def run(self, max_cycles: int = 20) -> None:
-        """메인 루프. max_cycles만큼 처리 후 종료."""
+        """메인 루프. max_cycles만큼 처리 후 종료.
+
+        [GUI 연동 제안 - 김태익] gui/의 Qt 대시보드에서 이 Pipeline을 QThread
+        안에서 Start/Stop/Reset으로 제어하려면, 지금처럼 "정해진 횟수 돌고 끝"이
+        아니라 "멈추라고 할 때까지 계속 도는" 구조가 필요합니다. 실제 코드는 안
+        건드렸고, 아래 세 군데만 바꾸면 될 것 같아서 주석으로 남겨둡니다:
+
+          1. 이 while 조건을 `while self._running:`으로 바꾸기
+             (__init__에 self._running = False는 이미 넣어둠).
+             max_cycles는 없애지 말고 `int | None = None`으로 남겨서,
+             `while self._running and (max_cycles is None or cycle < max_cycles):`
+             처럼 두면 지금 CLI(`python -m integration.pipeline`, 20번 돌고 요약
+             출력)는 그대로 동작하고, GUI에서는 max_cycles=None으로 무한 루프.
+          2. 아래 `for det in detections:` 루프 안에도 `if not self._running: break`
+             같은 체크를 추가하기 — execute_task()가 도는 동안(더미도 0.5초,
+             실제 로봇팔은 더 김)은 바깥 while만 봐서는 Stop이 늦게 반영됨.
+          3. `self._running`을 외부에서 직접 만지지 않도록
+             `def start(self): self._running = True` /
+             `def stop(self): self._running = False` 를 메서드로 노출하기.
+
+        의견 있으면 편하게 얘기해주세요.
+        """
         print(f"[pipeline] 시작 (max_cycles={max_cycles})")
         cycle = 0
 
@@ -74,6 +95,8 @@ class Pipeline:
                 continue
 
             for det in detections:
+                # [GUI 연동 제안 - 김태익] 여기(각 detection 처리 시작 지점)에
+                # `if not self._running: break`를 넣으면 Stop이 즉시 반응함.
                 # ② 좌표 변환
                 t1 = time.time()
                 wx, wy = self.calibrator.pixel_to_world(det.pixel_x, det.pixel_y)

@@ -21,6 +21,7 @@ Start / Stop / Reset은 시뮬레이션에만 적용됩니다 (웹캠은 창이 
 
 from __future__ import annotations
 
+from PySide6.QtCore import QSettings
 from PySide6.QtGui import QAction, QImage, QPixmap, Qt
 from PySide6.QtWidgets import (
     QGroupBox,
@@ -74,7 +75,11 @@ class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle("Robot Dashboard")
-        self.resize(1280, 800)  # 시작 창 크기
+        self.resize(1280, 800)  # 시작 창 크기 (저장된 레이아웃 없을 때의 기본값)
+
+        # QSettings는 OS별 표준 위치에 자동 저장됩니다 (Windows는 레지스트리).
+        # 회사/앱 이름은 실제로 등록된 이름일 필요 없이, 이 앱만의 고유 키 역할만 함.
+        self._settings = QSettings("RobotwinSorter", "RobotDashboard")
 
         self.sim_worker = SimWorker()
         self.webcam_worker = WebcamWorker()
@@ -82,6 +87,7 @@ class MainWindow(QMainWindow):
         self._build_toolbar()
         self._build_central_widget()
         self._connect_signals()
+        self._restore_layout()
 
         self.webcam_worker.start_capture()
 
@@ -145,23 +151,51 @@ class MainWindow(QMainWindow):
         webcam_layout.addLayout(camera_index_row)
         webcam_layout.addWidget(self.webcam_view)
 
-        sim_webcam_splitter = QSplitter(Qt.Orientation.Horizontal)
-        sim_webcam_splitter.addWidget(sim_group)
-        sim_webcam_splitter.addWidget(webcam_group)
+        self.sim_webcam_splitter = QSplitter(Qt.Orientation.Horizontal)
+        self.sim_webcam_splitter.addWidget(sim_group)
+        self.sim_webcam_splitter.addWidget(webcam_group)
 
-        log_status_splitter = QSplitter(Qt.Orientation.Horizontal)
-        log_status_splitter.addWidget(self.camera_control_panel)
-        log_status_splitter.addWidget(self.log_panel)
-        log_status_splitter.addWidget(self.status_panel)
-        
-        main_splitter = QSplitter(Qt.Orientation.Vertical, self)
-        main_splitter.addWidget(sim_webcam_splitter)
-        main_splitter.addWidget(log_status_splitter)
-        # 초기 비율: 위(시뮬/카메라)는 크게, 아래(로그/상태)는 작게.
-        # setSizes는 "시작할 때"만 이 픽셀 비율로 나누고, 이후엔 사용자가 드래그한
-        # 크기가 우선입니다 (창을 다시 열 때마다 이 비율로 리셋됨).
-        main_splitter.setSizes([600, 150])
-        self.setCentralWidget(main_splitter)
+        self.log_status_splitter = QSplitter(Qt.Orientation.Horizontal)
+        self.log_status_splitter.addWidget(self.camera_control_panel)
+        self.log_status_splitter.addWidget(self.log_panel)
+        self.log_status_splitter.addWidget(self.status_panel)
+
+        self.main_splitter = QSplitter(Qt.Orientation.Vertical, self)
+        self.main_splitter.addWidget(self.sim_webcam_splitter)
+        self.main_splitter.addWidget(self.log_status_splitter)
+        # 초기 비율(저장된 레이아웃이 없는 첫 실행 기준): 위(시뮬/카메라)는 크게,
+        # 아래(로그/상태)는 작게. _restore_layout()이 저장된 값이 있으면 이걸
+        # 덮어씁니다.
+        self.main_splitter.setSizes([600, 150])
+        self.setCentralWidget(self.main_splitter)
+
+    def _restore_layout(self) -> None:
+        """이전에 저장해둔 창 크기/splitter 비율이 있으면 복원.
+
+        QByteArray를 그대로 저장/복원하는 saveGeometry()/restoreGeometry(),
+        splitter의 saveState()/restoreState()를 씁니다. 저장된 값이 없으면
+        (맨 처음 실행) _build_central_widget()에서 이미 정해둔 기본값을 그대로 둠.
+        """
+        geometry = self._settings.value("window/geometry")
+        if geometry is not None:
+            self.restoreGeometry(geometry)
+
+        for key, splitter in (
+            ("layout/main_splitter", self.main_splitter),
+            ("layout/sim_webcam_splitter", self.sim_webcam_splitter),
+            ("layout/log_status_splitter", self.log_status_splitter),
+        ):
+            state = self._settings.value(key)
+            if state is not None:
+                splitter.restoreState(state)
+
+    def _save_layout(self) -> None:
+        """창 닫을 때 지금 창 크기/splitter 비율을 저장. 다음 실행 때 _restore_layout()이
+        이 값을 읽어서 그대로 복원함."""
+        self._settings.setValue("window/geometry", self.saveGeometry())
+        self._settings.setValue("layout/main_splitter", self.main_splitter.saveState())
+        self._settings.setValue("layout/sim_webcam_splitter", self.sim_webcam_splitter.saveState())
+        self._settings.setValue("layout/log_status_splitter", self.log_status_splitter.saveState())
 
     def _connect_signals(self) -> None:
         """워커 시그널 ↔ 위젯 슬롯 연결."""
@@ -210,6 +244,7 @@ class MainWindow(QMainWindow):
           프로세스가 남을 수 있습니다. stop 계열 메서드 호출 후 wait()로 스레드
           종료까지 기다린 다음 super().closeEvent(event)를 호출하세요.
         """
+        self._save_layout()
         self.sim_worker.shutdown()
         self.sim_worker.wait()
         self.webcam_worker.stop_capture()
