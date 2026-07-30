@@ -47,6 +47,7 @@ class Pipeline:
 
         # 중복 처리 방지용
         self.processing_coords: list[tuple[float, float]] = []
+        self._running = False
 
     def is_duplicate(self, wx: float, wy: float) -> bool:
         """이미 처리 중인 좌표 근처인지 확인."""
