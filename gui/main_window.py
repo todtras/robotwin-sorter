@@ -22,9 +22,9 @@ Start / Stop / Reset은 시뮬레이션에만 적용됩니다 (웹캠은 창이 
 from __future__ import annotations
 
 from PySide6.QtGui import QAction, QImage, QPixmap, Qt
-from PySide6.QtWidgets import QLabel, QMainWindow, QMessageBox, QSplitter
+from PySide6.QtWidgets import QGroupBox, QLabel, QMainWindow, QSplitter, QStyle, QVBoxLayout
 
-from gui.panels import LogPanel, StatusPanel
+from gui.panels import CameraControlPanel, LogPanel, StatusPanel
 from gui.sim_worker import SimWorker
 from gui.webcam_worker import WebcamWorker
 
@@ -56,7 +56,7 @@ class AspectRatioLabel(QLabel):
             super().setPixmap(self._original_pixmap.scaled(
                 self.size(),
                 Qt.AspectRatioMode.KeepAspectRatio,
-                Qt.TransformationMode.SmoothTransformation,
+                Qt.TransformationMode.FastTransformation,  # 매 프레임 스케일링 비용 절감(화질은 약간 거칠어짐)
             ))
 
 
@@ -69,38 +69,40 @@ class MainWindow(QMainWindow):
         self.sim_worker = SimWorker()
         self.webcam_worker = WebcamWorker()
 
-        self._build_menu()
+        self._build_toolbar()
         self._build_central_widget()
         self._connect_signals()
 
-        # TODO: 웹캠은 시뮬레이션 Start와 무관하게 창을 열자마자 바로 촬영을
-        #       시작하는 게 자연스럽습니다: self.webcam_worker.start_capture()
         self.webcam_worker.start_capture()
 
-    def _build_menu(self) -> None:
-        """메뉴바 구성: Start / Stop / Reset / Settings / Exit."""
+    def _build_toolbar(self) -> None:
+        """Start / Stop / Reset / Exit을 항상 보이는 툴바에 배치.
 
-        sim_menu = self.menuBar().addMenu("Simulation")
+        메뉴바(QMenuBar.addMenu)는 "Simulation"을 눌러야 펼쳐지는 드롭다운이라,
+        매번 클릭 한 번이 더 필요합니다. QToolBar는 액션들이 버튼으로 항상 노출돼
+        바로 클릭할 수 있습니다.
+        """
+        toolbar = self.addToolBar("Simulation")
+        toolbar.setMovable(False)
+        style = self.style()  # QStyle.StandardPixmap 아이콘은 별도 이미지 파일 없이 사용 가능
 
-        start_action = QAction("Start", self)
+        start_action = QAction(style.standardIcon(QStyle.StandardPixmap.SP_MediaPlay), "Start", self)
         start_action.triggered.connect(self.sim_worker.start_simulation)
-        sim_menu.addAction(start_action)
+        toolbar.addAction(start_action)
 
-        stop_action = QAction("Stop", self)
+        stop_action = QAction(style.standardIcon(QStyle.StandardPixmap.SP_MediaPause), "Stop", self)
         stop_action.triggered.connect(self.sim_worker.stop_simulation)
-        sim_menu.addAction(stop_action)
+        toolbar.addAction(stop_action)
 
-        reset_action = QAction("Reset", self)
+        reset_action = QAction(style.standardIcon(QStyle.StandardPixmap.SP_BrowserReload), "Reset", self)
         reset_action.triggered.connect(self.sim_worker.reset_simulation)
-        sim_menu.addAction(reset_action)
+        toolbar.addAction(reset_action)
 
-        settings_action = QAction("Settings", self)
-        settings_action.triggered.connect(lambda: QMessageBox.information(self, "Settings", "준비 중"))
-        sim_menu.addAction(settings_action)
+        toolbar.addSeparator()
 
-        exit_action = QAction("Exit", self)
+        exit_action = QAction(style.standardIcon(QStyle.StandardPixmap.SP_TitleBarCloseButton), "Exit", self)
         exit_action.triggered.connect(self.close)
-        sim_menu.addAction(exit_action)
+        toolbar.addAction(exit_action)
 
     def _build_central_widget(self) -> None:
         """중앙 시뮬레이션 화면 + 웹캠 화면 + 로그/상태 패널 레이아웃."""
@@ -109,15 +111,23 @@ class MainWindow(QMainWindow):
         self.webcam_view = AspectRatioLabel("Waiting for camera...")
         self.log_panel = LogPanel()
         self.status_panel = StatusPanel()
+        self.camera_control_panel = CameraControlPanel()
+
+        sim_group = QGroupBox("Simulation")
+        QVBoxLayout(sim_group).addWidget(self.sim_view)
+
+        webcam_group = QGroupBox("Webcam")
+        QVBoxLayout(webcam_group).addWidget(self.webcam_view)
 
         sim_webcam_splitter = QSplitter(Qt.Orientation.Horizontal)
-        sim_webcam_splitter.addWidget(self.sim_view)
-        sim_webcam_splitter.addWidget(self.webcam_view)
+        sim_webcam_splitter.addWidget(sim_group)
+        sim_webcam_splitter.addWidget(webcam_group)
 
         log_status_splitter = QSplitter(Qt.Orientation.Horizontal)
+        log_status_splitter.addWidget(self.camera_control_panel)
         log_status_splitter.addWidget(self.log_panel)
         log_status_splitter.addWidget(self.status_panel)
-
+        
         main_splitter = QSplitter(Qt.Orientation.Vertical, self)
         main_splitter.addWidget(sim_webcam_splitter)
         main_splitter.addWidget(log_status_splitter)
@@ -135,6 +145,12 @@ class MainWindow(QMainWindow):
         self.sim_worker.log_message.connect(self.log_panel.append_log)
         self.webcam_worker.frame_ready.connect(self._on_webcam_frame)
         self.webcam_worker.log_message.connect(self.log_panel.append_log)
+        self.camera_control_panel.params_changed.connect(self._on_camera_params_changed)
+
+    def _on_camera_params_changed(self, distance: float, yaw: float, pitch: float) -> None:
+        """CameraControlPanel.params_changed 시그널에 연결될 슬롯."""
+
+        self.sim_worker.apply_settings(distance=distance, yaw=yaw, pitch=pitch)
 
     def _on_sim_frame(self, image: QImage) -> None:
         """AspectRatioLabel이 비율 유지 스케일링을 알아서 처리하니 그냥 넘기기만 하면 됨."""

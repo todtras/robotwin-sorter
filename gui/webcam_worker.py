@@ -46,7 +46,7 @@ class WebcamWorker(QThread):
 
     def stop_capture(self) -> None:
         self._running = False
-        
+
     def run(self) -> None:
         cap = cv2.VideoCapture(self._camera_index)
         cap.set(cv2.CAP_PROP_FRAME_WIDTH, config.FRAME_WIDTH)
@@ -63,14 +63,16 @@ class WebcamWorker(QThread):
                     self.msleep(100)
                     continue
 
-                frame_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
-                image = QImage(frame_rgb.data, frame_rgb.shape[1], frame_rgb.shape[0], QImage.Format_RGB888).copy()
+                # OpenCV는 BGR 순서로 프레임을 주는데, cv2.cvtColor로 RGB로 바꾸는
+                # 대신 QImage.Format_BGR888로 그대로 감싸면 매 프레임 색상 재배열
+                # 복사(cvtColor)를 통째로 생략할 수 있음.
+                height, width = frame_bgr.shape[:2]
+                image = QImage(
+                    frame_bgr.data, width, height, 3 * width, QImage.Format.Format_BGR888
+                ).copy()  # ★ 스레드 경계 넘기기 전 복제 필수 (sim_worker와 동일 이유)
                 self.frame_ready.emit(image)
 
-                self.msleep(33)  # 대략 30fps 유지
+                # cap.read()가 카메라 자체 fps(config.CAMERA_FPS)만큼 이미 블로킹하므로
+                # 여기서 추가로 msleep을 하면 체감 fps가 그만큼 더 줄어듦 -> 제거.
         finally:
             cap.release()
-
-        
-
-

@@ -12,10 +12,12 @@ import sys
 from PySide6.QtWidgets import QApplication
 
 from gui.main_window import MainWindow
+from gui.theme import DARK_STYLESHEET
 
 
 def main() -> None:
     app = QApplication(sys.argv)
+    app.setStyleSheet(DARK_STYLESHEET)
     window = MainWindow()
     window.show()
     sys.exit(app.exec())
