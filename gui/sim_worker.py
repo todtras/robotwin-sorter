@@ -30,6 +30,7 @@ Qt 처음이면 알아둘 개념:
 
 from __future__ import annotations
 
+import random
 import time
 import numpy as np
 import pybullet as p
@@ -42,6 +43,18 @@ FRAME_WIDTH = 320
 FRAME_HEIGHT = 240
 TARGET_FPS = 60  # 기본값. Settings 다이얼로그에서 바꾸면 인스턴스별 self._target_fps로 대체됨
 
+NUM_OBJECTS = 6
+RESPAWN_INTERVAL_SEC = 10.0  # 이 주기마다 물체를 전부 치우고 새로 떨어뜨림 (무한 반복)
+OBJECT_HALF_EXTENT = 0.05
+OBJECT_RESTITUTION = 0.8  # 반발력(0=안 튕김, 1=에너지 손실 없이 튕김). 기본값 0이라 명시 필요
+OBJECT_COLORS = [
+    [0.2, 0.4, 1.0, 1.0],  # blue
+    [0.2, 0.8, 0.3, 1.0],  # green
+    [0.9, 0.6, 0.1, 1.0],  # orange
+    [0.8, 0.2, 0.8, 1.0],  # purple
+    [0.9, 0.2, 0.2, 1.0],  # red
+]
+
 
 class SimWorker(QThread):
     """시뮬레이션 루프를 도는 워커 스레드.
@@ -49,7 +62,7 @@ class SimWorker(QThread):
     Signals (클래스 몸체에 이렇게 선언하면 "이 클래스의 인스턴스는 이런 이벤트를
     내보낼 수 있다"는 뜻이 됩니다. 괄호 안 타입은 emit()할 때 넘길 데이터 타입):
         frame_ready(QImage): 렌더링된 시뮬레이션 프레임 한 장.
-        state_changed(dict): {"fps": ..., "step": ..., "cube_z": ...} 같은 상태 값.
+        state_changed(dict): {"fps": ..., "step": ..., "avg_height": ...} 같은 상태 값.
         log_message(str): 로그 패널에 표시할 텍스트 한 줄.
     """
 
@@ -63,7 +76,7 @@ class SimWorker(QThread):
         self._playing = False        # 재생 중인지 (Start/Stop이 토글)
         self._reset_requested = False
         self._client_id: int | None = None
-        self._cube_id: int | None = None
+        self._object_ids: list[int] = []
 
         # Settings 다이얼로그로 조절할 값들. 지금은 기존 하드코딩 값과 동일하게
         # 초기화만 해두고, apply_settings()/get_settings()는 아래에 TODO로 남겨둠.
@@ -180,6 +193,7 @@ class SimWorker(QThread):
         frames_since_fps = 0
         last_fps_time = time.monotonic()
         last_frame_time = time.monotonic()
+        last_respawn_time = time.monotonic()
 
         while self._thread_alive:
             if self._reset_requested:
@@ -190,6 +204,7 @@ class SimWorker(QThread):
                 frames_since_fps = 0
                 last_fps_time = time.monotonic()
                 last_frame_time = time.monotonic()
+                last_respawn_time = time.monotonic()
 
                 self.frame_ready.emit(self._capture_frame())
 
@@ -204,11 +219,19 @@ class SimWorker(QThread):
             self.msleep(4)  # 물리 스텝을 대략 실시간 속도로 유지 (240Hz 기준 ~4ms/스텝)
             step_count += 1
 
+            now = time.monotonic()
+
+            # 물체들이 바닥에 자리 잡고 나면 화면이 정지된 것처럼 보이니, 일정 주기마다
+            # 전부 치우고 새로 색깔/위치를 바꿔 다시 떨어뜨림 (무한 반복).
+            if now - last_respawn_time >= RESPAWN_INTERVAL_SEC:
+                self._despawn_objects()
+                self._spawn_objects()
+                last_respawn_time = now
+
             # 스텝 수가 아니라 실제 경과 시간으로 캡처 여부를 판단 -> msleep 값과
             # 무관하게 항상 목표 fps에 가깝게 프레임이 나옴.
             # self._target_fps를 매번 다시 읽으므로 apply_settings()로 바꾼 값이
             # 다음 반복부터 바로 반영됨 (모듈 상수 FRAME_INTERVAL 대신 사용).
-            now = time.monotonic()
             if now - last_frame_time >= 1.0 / self._target_fps:
                 self.frame_ready.emit(self._capture_frame())
                 frames_since_fps += 1
@@ -216,8 +239,12 @@ class SimWorker(QThread):
 
             if now - last_fps_time >= 1.0:
                 fps = frames_since_fps / (now - last_fps_time)
-                cube_pos, _ = p.getBasePositionAndOrientation(self._cube_id, physicsClientId=self._client_id)
-                self.state_changed.emit({"fps": fps, "step": step_count, "cube_z": cube_pos[2]})
+                heights = [
+                    p.getBasePositionAndOrientation(body_id, physicsClientId=self._client_id)[0][2]
+                    for body_id in self._object_ids
+                ]
+                avg_height = sum(heights) / len(heights) if heights else 0.0
+                self.state_changed.emit({"fps": fps, "step": step_count, "avg_height": avg_height})
                 frames_since_fps = 0
                 last_fps_time = now
 
@@ -227,9 +254,12 @@ class SimWorker(QThread):
         self._client_id = p.connect(p.DIRECT)
         p.setAdditionalSearchPath(pybullet_data.getDataPath(), physicsClientId=self._client_id)
         p.setGravity(0, 0, -9.81, physicsClientId=self._client_id)
-        p.loadURDF("plane.urdf", physicsClientId=self._client_id)
-        self._cube_id = p.loadURDF("cube_small.urdf", basePosition=[0, 0, 1.0],
-                                   physicsClientId=self._client_id)
+        plane_id = p.loadURDF("plane.urdf", physicsClientId=self._client_id)
+        # ★ pybullet은 기본 반발력(restitution)이 0이라 아무것도 안 튕깁니다.
+        #   바닥과 물체 양쪽에 restitution을 줘야 실제로 튕기는 게 보입니다
+        #   (충돌 시 실제 반발력은 두 값을 조합해서 계산됨).
+        p.changeDynamics(plane_id, -1, restitution=OBJECT_RESTITUTION, physicsClientId=self._client_id)
+        self._spawn_objects()
 
         # 투영 행렬(fov/aspect/near/far)은 사용자가 못 바꾸니 한 번만 계산해서 재사용.
         # 뷰 행렬(거리/yaw/pitch)은 CameraControlPanel로 실시간 조절되므로 여기서
@@ -244,11 +274,42 @@ class SimWorker(QThread):
 
     def _teardown_scene(self) -> None:
         """TODO: self._client_id가 None이 아니면 p.disconnect(physicsClientId=...)
-        호출하고, self._client_id / self._cube_id를 다시 None으로 되돌리세요."""
+        호출하고, self._client_id / self._object_ids를 다시 초기 상태로 되돌리세요."""
         if self._client_id is not None:
             p.disconnect(physicsClientId=self._client_id)
             self._client_id = None
-            self._cube_id = None
+            self._object_ids = []
+
+    def _spawn_objects(self) -> None:
+        """색깔 있는 물체 NUM_OBJECTS개를 임의 위치/색으로 떨어뜨림."""
+        self._object_ids = []
+        for _ in range(NUM_OBJECTS):
+            color = random.choice(OBJECT_COLORS)
+            half = OBJECT_HALF_EXTENT
+            position = [
+                random.uniform(-0.3, 0.3),
+                random.uniform(-0.3, 0.3),
+                random.uniform(1.0, 2.5),
+            ]
+            vis = p.createVisualShape(
+                p.GEOM_BOX, halfExtents=[half] * 3, rgbaColor=color, physicsClientId=self._client_id
+            )
+            col = p.createCollisionShape(p.GEOM_BOX, halfExtents=[half] * 3, physicsClientId=self._client_id)
+            body_id = p.createMultiBody(
+                baseMass=0.2,
+                baseCollisionShapeIndex=col,
+                baseVisualShapeIndex=vis,
+                basePosition=position,
+                physicsClientId=self._client_id,
+            )
+            p.changeDynamics(body_id, -1, restitution=OBJECT_RESTITUTION, physicsClientId=self._client_id)
+            self._object_ids.append(body_id)
+
+    def _despawn_objects(self) -> None:
+        """_spawn_objects()로 만든 물체를 전부 제거."""
+        for body_id in self._object_ids:
+            p.removeBody(body_id, physicsClientId=self._client_id)
+        self._object_ids = []
 
     def _capture_frame(self) -> QImage:
         """현재 씬을 렌더링해서 QImage로 변환합니다.

@@ -54,11 +54,11 @@ class LogPanel(QGroupBox):
 
 
 class StatusPanel(QGroupBox):
-    """FPS / step / cube 위치 등 상태 값을 보여주는 패널.
+    """FPS / step / 물체 평균 높이 등 상태 값을 보여주는 패널.
 
-    지금은 sim_worker.py의 데모 씬(낙하 큐브) 값을 그대로 표시하면 됩니다.
-    나중에 Pipeline이 연결되면 state dict의 키(FSM 상태, joint 정보 등)만
-    바뀌고 이 위젯 구조는 그대로 재사용할 수 있습니다.
+    지금은 sim_worker.py의 데모 씬(색깔 물체 여러 개, 주기적으로 리스폰) 값을
+    그대로 표시하면 됩니다. 나중에 Pipeline이 연결되면 state dict의 키(FSM 상태,
+    joint 정보 등)만 바뀌고 이 위젯 구조는 그대로 재사용할 수 있습니다.
     """
 
     def __init__(self) -> None:
@@ -66,22 +66,22 @@ class StatusPanel(QGroupBox):
 
         self.fps_label = QLabel("-")
         self.step_label = QLabel("-")
-        self.cube_z_label = QLabel("-")
+        self.avg_height_label = QLabel("-")
 
         layout = QFormLayout(self)
         layout.addRow("FPS", self.fps_label)
         layout.addRow("Step", self.step_label)
-        layout.addRow("Cube Z", self.cube_z_label)
+        layout.addRow("Avg Height", self.avg_height_label)
 
     def update_state(self, state: dict) -> None:
         """SimWorker.state_changed 시그널에 연결될 슬롯.
 
-        state는 {"fps": float, "step": int, "cube_z": float} 형태로 들어옵니다.
+        state는 {"fps": float, "step": int, "avg_height": float} 형태로 들어옵니다.
         """
 
         self.fps_label.setText(f"{state.get('fps', 0):.1f}")
         self.step_label.setText(str(state.get("step", 0)))
-        self.cube_z_label.setText(f"{state.get('cube_z', 0):.3f}")
+        self.avg_height_label.setText(f"{state.get('avg_height', 0):.3f}")
 
 
 class CameraControlPanel(QGroupBox):

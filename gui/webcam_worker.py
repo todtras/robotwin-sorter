@@ -47,6 +47,20 @@ class WebcamWorker(QThread):
     def stop_capture(self) -> None:
         self._running = False
 
+    def set_camera_index(self, index: int) -> None:
+        """카메라 인덱스를 바꿀 때 MainWindow가 호출.
+
+        ★ 스레드가 이미 cv2.VideoCapture를 열어서 돌고 있는 도중에 이 값만 바꾸면
+          당장은 반영되지 않습니다(run()이 시작할 때 딱 한 번만 VideoCapture를 엽니다).
+          MainWindow 쪽에서
+              stop_capture() -> wait() -> set_camera_index(new_index) -> start_capture()
+          순서로 호출해서 스레드를 완전히 재시작해야 새 카메라 인덱스로 다시 열립니다.
+        """
+        self._camera_index = index
+
+    def get_camera_index(self) -> int:
+        return self._camera_index
+
     def run(self) -> None:
         cap = cv2.VideoCapture(self._camera_index)
         cap.set(cv2.CAP_PROP_FRAME_WIDTH, config.FRAME_WIDTH)

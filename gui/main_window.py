@@ -22,7 +22,17 @@ Start / Stop / Reset은 시뮬레이션에만 적용됩니다 (웹캠은 창이 
 from __future__ import annotations
 
 from PySide6.QtGui import QAction, QImage, QPixmap, Qt
-from PySide6.QtWidgets import QGroupBox, QLabel, QMainWindow, QSplitter, QStyle, QVBoxLayout
+from PySide6.QtWidgets import (
+    QGroupBox,
+    QHBoxLayout,
+    QLabel,
+    QMainWindow,
+    QPushButton,
+    QSpinBox,
+    QSplitter,
+    QStyle,
+    QVBoxLayout,
+)
 
 from gui.panels import CameraControlPanel, LogPanel, StatusPanel
 from gui.sim_worker import SimWorker
@@ -116,8 +126,24 @@ class MainWindow(QMainWindow):
         sim_group = QGroupBox("Simulation")
         QVBoxLayout(sim_group).addWidget(self.sim_view)
 
+        # 팀원마다 웹캠 장치 번호(config.CAMERA_INDEX)가 다를 수 있어서(외장캠 유무 등),
+        # config.py를 직접 고치는 대신 대시보드에서만 즉석으로 바꿔볼 수 있게 함.
+        self.camera_index_spin = QSpinBox()
+        self.camera_index_spin.setRange(0, 10)
+        self.camera_index_spin.setValue(self.webcam_worker.get_camera_index())
+        self.reconnect_button = QPushButton("Reconnect")
+        self.reconnect_button.clicked.connect(self._reconnect_webcam)
+
+        camera_index_row = QHBoxLayout()
+        camera_index_row.addWidget(QLabel("Index"))
+        camera_index_row.addWidget(self.camera_index_spin)
+        camera_index_row.addWidget(self.reconnect_button)
+        camera_index_row.addStretch(1)
+
         webcam_group = QGroupBox("Webcam")
-        QVBoxLayout(webcam_group).addWidget(self.webcam_view)
+        webcam_layout = QVBoxLayout(webcam_group)
+        webcam_layout.addLayout(camera_index_row)
+        webcam_layout.addWidget(self.webcam_view)
 
         sim_webcam_splitter = QSplitter(Qt.Orientation.Horizontal)
         sim_webcam_splitter.addWidget(sim_group)
@@ -151,6 +177,22 @@ class MainWindow(QMainWindow):
         """CameraControlPanel.params_changed 시그널에 연결될 슬롯."""
 
         self.sim_worker.apply_settings(distance=distance, yaw=yaw, pitch=pitch)
+
+    def _reconnect_webcam(self) -> None:
+        """Reconnect 버튼 클릭 시 호출. 새 인덱스로 웹캠 스레드를 재시작.
+
+        ★ cv2.VideoCapture는 스레드가 run() 시작할 때 한 번만 여니까, 인덱스만
+          바꿔서는 반영이 안 됩니다. stop_capture() -> wait()(스레드가 실제로
+          끝날 때까지 대기) -> set_camera_index() -> start_capture() 순서로
+          완전히 재시작해야 합니다. wait()는 GUI 스레드를 잠깐 블로킹하지만,
+          "카메라 다시 연결"은 사용자가 버튼을 누른 즉시 반응하는 액션이라
+          이 정도 지연은 자연스럽습니다.
+        """
+        new_index = self.camera_index_spin.value()
+        self.webcam_worker.stop_capture()
+        self.webcam_worker.wait()
+        self.webcam_worker.set_camera_index(new_index)
+        self.webcam_worker.start_capture()
 
     def _on_sim_frame(self, image: QImage) -> None:
         """AspectRatioLabel이 비율 유지 스케일링을 알아서 처리하니 그냥 넘기기만 하면 됨."""
