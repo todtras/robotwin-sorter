@@ -42,8 +42,17 @@ class Pipeline:
             self.detector = DummyDetector(detect_probability=0.3)
             self.arm = DummyArmController(success_rate=0.9, delay_sec=0.5)
         else:
-            # Day 5에 실제 모듈로 교체
-            raise NotImplementedError("실제 모듈은 Day 5에 연결")
+            from vision.camera import Camera
+            from vision.detector import TrashDetector
+            from robot.scene import Scene
+            from robot.arm_controller import ArmController
+
+            self.camera = Camera()
+            self.camera.open()
+            self.detector = TrashDetector()
+            scene = Scene()
+            scene.build()
+            self.arm = ArmController(scene.robot_id)
 
         # 중복 처리 방지용
         self.processing_coords: list[tuple[float, float]] = []
@@ -64,7 +73,8 @@ class Pipeline:
         while cycle < max_cycles:
             # ① 검출
             t0 = time.time()
-            detections = self.detector.detect(frame=None)
+            frame = self.camera.read()
+            detections = self.detector.detect(frame)
             t_detect = (time.time() - t0) * 1000
 
             if not detections:
@@ -128,7 +138,7 @@ class Pipeline:
         p.disconnect()
 
 def main() -> None:
-    pipeline = Pipeline(use_dummy=True)
+    pipeline = Pipeline(use_dummy=True)# 더미 on off
     try:
         pipeline.run(max_cycles=20)
     finally:
