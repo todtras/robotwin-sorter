@@ -26,12 +26,6 @@ from tests.dummy_vision import DummyDetector
 class Pipeline:
     """전체 시스템 메인 루프."""
     def __init__(self, use_dummy: bool = True) -> None:
-        # --- PyBullet 초기화 ---
-        mode = p.GUI if config.USE_GUI else p.DIRECT
-        self.physics_client = p.connect(mode)
-        p.setAdditionalSearchPath(pybullet_data.getDataPath())
-        p.setGravity(0, 0, -9.81)
-        p.loadURDF("plane.urdf")
 
         # --- 모듈 생성 ---
         self.calibrator = Calibrator()
@@ -41,17 +35,28 @@ class Pipeline:
         if use_dummy:
             self.detector = DummyDetector(detect_probability=0.3)
             self.arm = DummyArmController(success_rate=0.9, delay_sec=0.5)
+                    # --- PyBullet 초기화 ---
+            mode = p.GUI if config.USE_GUI else p.DIRECT
+            self.physics_client = p.connect(mode)
+            p.setAdditionalSearchPath(pybullet_data.getDataPath())
+            p.setGravity(0, 0, -9.81)
+            p.loadURDF("plane.urdf")
+
+            self.camera = None
+            self.detector = DummyDetector(detect_probability=0.3)
+            self.arm = DummyArmController(success_rate=0.9, delay_sec=0.5)
+
         else:
             from vision.camera import Camera
             from vision.detector import TrashDetector
             from robot.scene import Scene
             from robot.arm_controller import ArmController
 
+            scene = Scene()
+            scene.build()
             self.camera = Camera()
             self.camera.open()
             self.detector = TrashDetector()
-            scene = Scene()
-            scene.build()
             self.arm = ArmController(scene.robot_id)
 
         # 중복 처리 방지용
@@ -73,7 +78,10 @@ class Pipeline:
         while cycle < max_cycles:
             # ① 검출
             t0 = time.time()
-            frame = self.camera.read()
+            if self.camera is not None:
+                frame = self.camera.read()
+            else:
+                frame = None
             detections = self.detector.detect(frame)
             t_detect = (time.time() - t0) * 1000
 
@@ -143,47 +151,6 @@ def main() -> None:
         pipeline.run(max_cycles=20)
     finally:
         pipeline.shutdown()
-    """메인 루프.
-
-    TODO(선우) Day 3~4:
-
-        camera     = Camera();            camera.open()
-        detector   = TrashDetector()
-        calibrator = Calibrator()
-        scene      = Scene();             scene.build()
-        spawner    = ObjectSpawner()
-        arm        = ArmController(scene.robot_id)
-        logger     = SortLogger()
-
-        while True:
-            frame = camera.read()
-            detections = detector.detect(frame)
-
-            for det in detections:
-                if not stability.is_stable(det.pixel_x, det.pixel_y):
-                    continue                       # 아직 사람 손 위
-                if is_duplicate(det):
-                    continue                       # 이미 처리 중인 물체
-                wx, wy = calibrator.pixel_to_world(det.pixel_x, det.pixel_y)
-                if not calibrator.is_in_workspace(wx, wy):
-                    logger.record_failure(det, "out_of_workspace")
-                    continue
-                task = spawner.spawn(det, (wx, wy))
-                ok   = arm.execute_task(task)
-                logger.record(task, ok, timings)
-                spawner.remove(task.body_id)
-
-            scene.step()
-
-    ★ 동시성 주의: 로봇이 처리하는 동안에도 검출은 계속 들어옵니다.
-      초기 버전은 큐에 쌓아두고 **순차 처리**로 단순하게 가세요.
-      멀티스레드는 Day 8 이후 여유 있을 때만. 지금 하면 디버깅이 지옥입니다.
-
-    ★ Day 4는 이 파이프라인에서 detector만 색상 기반 검출기로 바꿔
-      좌표 변환 + 로봇 제어 연결만 먼저 검증합니다.
-      (모델의 불확실성을 배제해야 실패 원인 범위가 좁아집니다)
-    """
-
 
 if __name__ == "__main__":
     main()
