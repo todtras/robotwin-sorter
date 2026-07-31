@@ -25,36 +25,43 @@ tools/capture.py — 학습 데이터 수집
 
 from __future__ import annotations
 
+import time
+
+import cv2
+
 import config
+from vision.camera import Camera
 
 RAW_DIR = config.DATASET_DIR / "raw"
 
 
 def main() -> None:
-    """TODO(주연) Day 1 오전:
+    """스페이스바로 프레임을 한 장씩 저장. Q로 종료.
 
-        RAW_DIR.mkdir(parents=True, exist_ok=True)
-        cap = cv2.VideoCapture(config.CAMERA_INDEX)
-        cap.set(cv2.CAP_PROP_FRAME_WIDTH,  config.FRAME_WIDTH)
-        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, config.FRAME_HEIGHT)
-
+    ★ Camera()가 config의 해상도/FPS를 그대로 적용하고 불일치 시 경고를
+      찍어주므로, 여기서 별도로 해상도를 확인할 필요는 없다(vision/camera.py 참고).
+    """
+    RAW_DIR.mkdir(parents=True, exist_ok=True)
+    saved = 0
+    with Camera() as cam:
+        print(f"[capture] 저장 위치: {RAW_DIR}")
+        print("[capture] SPACE=저장, Q=종료")
         while True:
-            ret, frame = cap.read()
-            if not ret: break
+            frame = cam.read()
+            if frame is None:
+                print("[capture] 프레임을 읽지 못했습니다.")
+                break
             cv2.imshow("capture (SPACE=save, Q=quit)", frame)
             key = cv2.waitKey(1) & 0xFF
             if key == ord(' '):
-                path = RAW_DIR / f"img_{int(time.time()*1000)}.jpg"
+                path = RAW_DIR / f"img_{int(time.time() * 1000)}.jpg"
                 cv2.imwrite(str(path), frame)
+                saved += 1
+                print(f"[capture] 저장: {path.name} (총 {saved}장)")
             elif key == ord('q'):
                 break
-
-        cap.release(); cv2.destroyAllWindows()
-
-    ★ 해상도가 config 값과 실제로 같은지 첫 프레임에서 확인하고 출력하세요.
-      학습 데이터와 실시간 추론의 해상도가 다르면 인식률이 크게 떨어집니다.
-    """
-    raise NotImplementedError
+    cv2.destroyAllWindows()
+    print(f"[capture] 종료. 총 {saved}장 저장됨.")
 
 
 if __name__ == "__main__":
