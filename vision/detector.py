@@ -63,6 +63,7 @@ if __name__ == "__main__":
     from vision.camera import Camera
 
     detector = TrashDetector()
+    seen_categories: set[str] = set()
     with Camera() as cam:
         print(f"[detector] model={detector.model_path} 실행 중. 창에서 Q를 누르면 종료.")
         while True:
@@ -71,9 +72,15 @@ if __name__ == "__main__":
                 print("[detector] 프레임을 읽지 못했습니다.")
                 break
             detections = detector.detect(frame)
-            if detections:
-                print(f"[detector] {len(detections)}건 검출: "
-                      f"{[(d.category, round(d.confidence, 2)) for d in detections]}")
+            current_categories = {d.category for d in detections}
+            # 시간 간격이 아니라 "직전 프레임엔 없던 카테고리가 이번 프레임에 처음 등장"할 때만 출력.
+            # 같은 카테고리가 계속 검출 중이면(위치만 바뀌어도) 다시 안 찍히고,
+            # 검출이 한 프레임이라도 끊겼다가 재검출되면 다시 찍힌다.
+            for cat in current_categories - seen_categories:
+                det = next(d for d in detections if d.category == cat)
+                print(f"[detector] 폐기물 검출: {cat} (conf={det.confidence:.2f}, "
+                      f"bbox={det.bbox}, frame_shape={frame.shape})")
+            seen_categories = current_categories
             vis = detector.draw(frame, detections)
             cv2.imshow("detector preview (Q=quit)", vis)
             if cv2.waitKey(1) & 0xFF == ord("q"):
