@@ -173,68 +173,85 @@ class SimWorker(QThread):
     # ------------------------------------------------------------------ #
 
     def run(self) -> None:
-        """QThread가 self.start() 호출 시 새 스레드에서 실행하는 진입점."""
+        """QThread가 self.start() 호출 시 새 스레드에서 실행하는 진입점.
 
-        self._build_scene()
+        ★ 이 메서드(그리고 여기서 부르는 모든 것) 안에서 예외가 나면 QThread는
+          그냥 조용히 스레드를 끝내버립니다 — GUI에는 아무 신호도 안 감. 그러면
+          "Waiting for simulation..." 화면에서 Start를 눌러도 반응 없는 것처럼
+          보이므로, 전체를 try/except로 감싸서 최소한 로그 패널에는 원인을
+          남깁니다.
+        """
+        try:
+            self._build_scene()
+        except Exception as exc:
+            self.log_message.emit(f"시뮬레이션 초기화 실패: {exc}")
+            self._thread_alive = False
+            return
+
         step_count = 0
         frames_since_fps = 0
         last_fps_time = time.monotonic()
         last_frame_time = time.monotonic()
 
-        while self._thread_alive:
-            if self._reset_requested:
-                self._teardown_scene()
-                self._build_scene()
+        try:
+            while self._thread_alive:
+                if self._reset_requested:
+                    self._teardown_scene()
+                    self._build_scene()
 
-                step_count = 0
-                frames_since_fps = 0
-                last_fps_time = time.monotonic()
-                last_frame_time = time.monotonic()
+                    step_count = 0
+                    frames_since_fps = 0
+                    last_fps_time = time.monotonic()
+                    last_frame_time = time.monotonic()
 
-                self.frame_ready.emit(self._capture_frame())
+                    self.frame_ready.emit(self._capture_frame())
 
-                self._reset_requested = False
-                self._playing = False
-                self.log_message.emit("Reset 완료 : 다시 Start 하세요")
+                    self._reset_requested = False
+                    self._playing = False
+                    self.log_message.emit("Reset 완료 : 다시 Start 하세요")
 
-            if not self._playing:
-                self.msleep(30)
-                continue
+                if not self._playing:
+                    self.msleep(30)
+                    continue
 
-            # frame=None(웹캠 아직 미연결 등)은 Pipeline.step_cycle()이 안전하게
-            # 건너뜀 — ultralytics가 None을 번들 샘플 이미지로 대체해 가짜 검출을
-            # 만들어내는 걸 막기 위한 가드가 거기 있음.
-            frame = None if self._use_dummy else self._latest_frame
-            completed = self._pipeline.step_cycle(frame)
-            step_count += 1
-            if completed:
-                summary = self._pipeline.logger.summary()
-                self.log_message.emit(
-                    f"분류 완료 (누적 {summary['total']}회, 성공률 {summary['success_rate']:.0%})"
-                )
+                # frame=None(웹캠 아직 미연결 등)은 Pipeline.step_cycle()이 안전하게
+                # 건너뜀 — ultralytics가 None을 번들 샘플 이미지로 대체해 가짜 검출을
+                # 만들어내는 걸 막기 위한 가드가 거기 있음.
+                frame = None if self._use_dummy else self._latest_frame
+                completed = self._pipeline.step_cycle(frame)
+                step_count += 1
+                if completed:
+                    summary = self._pipeline.logger.summary()
+                    self.log_message.emit(
+                        f"분류 완료 (누적 {summary['total']}회, 성공률 {summary['success_rate']:.0%})"
+                    )
 
-            now = time.monotonic()
+                now = time.monotonic()
 
-            # 스텝 수가 아니라 실제 경과 시간으로 캡처 여부를 판단 -> msleep 값과
-            # 무관하게 항상 목표 fps에 가깝게 프레임이 나옴.
-            # self._target_fps를 매번 다시 읽으므로 apply_settings()로 바꾼 값이
-            # 다음 반복부터 바로 반영됨 (모듈 상수 FRAME_INTERVAL 대신 사용).
-            if now - last_frame_time >= 1.0 / self._target_fps:
-                self.frame_ready.emit(self._capture_frame())
-                frames_since_fps += 1
-                last_frame_time = now
+                # 스텝 수가 아니라 실제 경과 시간으로 캡처 여부를 판단 -> msleep 값과
+                # 무관하게 항상 목표 fps에 가깝게 프레임이 나옴.
+                # self._target_fps를 매번 다시 읽으므로 apply_settings()로 바꾼 값이
+                # 다음 반복부터 바로 반영됨 (모듈 상수 FRAME_INTERVAL 대신 사용).
+                if now - last_frame_time >= 1.0 / self._target_fps:
+                    self.frame_ready.emit(self._capture_frame())
+                    frames_since_fps += 1
+                    last_frame_time = now
 
-            if now - last_fps_time >= 1.0:
-                fps = frames_since_fps / (now - last_fps_time)
-                summary = self._pipeline.logger.summary()
-                self.state_changed.emit({
-                    "fps": fps,
-                    "step": step_count,
-                    "sorted": summary["total"],
-                    "success_rate": summary["success_rate"],
-                })
-                frames_since_fps = 0
-                last_fps_time = now
+                if now - last_fps_time >= 1.0:
+                    fps = frames_since_fps / (now - last_fps_time)
+                    summary = self._pipeline.logger.summary()
+                    self.state_changed.emit({
+                        "fps": fps,
+                        "step": step_count,
+                        "sorted": summary["total"],
+                        "success_rate": summary["success_rate"],
+                    })
+                    frames_since_fps = 0
+                    last_fps_time = now
+        except Exception as exc:
+            self.log_message.emit(f"시뮬레이션 루프 오류로 정지: {exc}")
+        finally:
+            self._teardown_scene()
 
     def _build_scene(self) -> None:
         """Pipeline(로봇 + 수거함 + 분류 로직)을 생성합니다. 항상 DIRECT 모드로 붙여서

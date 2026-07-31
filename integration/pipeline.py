@@ -126,32 +126,33 @@ class Pipeline:
             if self.is_duplicate(wx, wy):
                 continue
 
-            # ② 스폰
+            # ② 스폰 -> ③ 로봇 실행 -> ④ 로깅. arm.execute_task()가 예외를 던져도
+            # processing_coords/스폰된 body가 영구히 안 남게 finally로 정리.
             self.processing_coords.append((wx, wy))
-            task = self.spawner.spawn(det, (wx, wy))
+            task = None
+            try:
+                task = self.spawner.spawn(det, (wx, wy))
 
-            # ③ 로봇 실행
-            t2 = time.time()
-            ok = self.arm.execute_task(task)
-            t_execute = (time.time() - t2) * 1000
+                t2 = time.time()
+                ok = self.arm.execute_task(task)
+                t_execute = (time.time() - t2) * 1000
 
-            # ④ 로깅
-            result = SortResult(
-                task=task,
-                success=ok,
-                fail_reason=None if ok else "timeout",
-                t_detect_ms=t_detect,
-                t_transform_ms=t_transform,
-                t_execute_ms=t_execute,
-            )
-            self.logger.record(result)
+                result = SortResult(
+                    task=task,
+                    success=ok,
+                    fail_reason=None if ok else "timeout",
+                    t_detect_ms=t_detect,
+                    t_transform_ms=t_transform,
+                    t_execute_ms=t_execute,
+                )
+                self.logger.record(result)
 
-            # ⑤ 정리
-            self.spawner.remove(task.body_id)
-            self.processing_coords.remove((wx, wy))
-
-            completed += 1
-            print(f"  {det.category} -> {task.target_bin} | {'OK' if ok else 'FAIL'}")
+                completed += 1
+                print(f"  {det.category} -> {task.target_bin} | {'OK' if ok else 'FAIL'}")
+            finally:
+                if task is not None:
+                    self.spawner.remove(task.body_id)
+                self.processing_coords.remove((wx, wy))
 
         p.stepSimulation()
         return completed

@@ -24,6 +24,7 @@ from __future__ import annotations
 from PySide6.QtCore import QSettings
 from PySide6.QtGui import QAction, QImage, QPixmap, Qt
 from PySide6.QtWidgets import (
+    QApplication,
     QGroupBox,
     QHBoxLayout,
     QLabel,
@@ -253,10 +254,22 @@ class MainWindow(QMainWindow):
         ★ 워커가 살아있는 채로 창을 닫으면 pybullet 클라이언트가 정리되지 않고
           프로세스가 남을 수 있습니다. stop 계열 메서드 호출 후 wait()로 스레드
           종료까지 기다린 다음 super().closeEvent(event)를 호출하세요.
+
+        ★ sim_worker는 로봇팔이 한창 동작 중(move_to() 타임아웃 최대 5초 x
+          최대 6번)이면 wait()가 수십 초까지 블로킹할 수 있습니다. 타임아웃을
+          줘서 무한정 멈추지 않게 하고, statusBar 메시지로 "종료 중"임을
+          알립니다 (showMessage() 직후 processEvents()를 안 부르면 뒤이은
+          wait()가 이벤트 루프를 막아버려서 이 메시지가 화면에 그려지지도
+          못한 채 창이 멈춘 것처럼 보입니다).
         """
         self._save_layout()
+
+        self.statusBar().showMessage("시뮬레이션 종료 대기 중...")
+        QApplication.processEvents()
+
         self.sim_worker.shutdown()
-        self.sim_worker.wait()
+        if not self.sim_worker.wait(10000):
+            print("[main_window] sim_worker가 10초 내에 안 끝났습니다 — 프로세스 종료로 정리됩니다.")
         self.webcam_worker.stop_capture()
-        self.webcam_worker.wait()
+        self.webcam_worker.wait(3000)
         super().closeEvent(event)

@@ -78,9 +78,6 @@ class ArmController:
         )
         self._ik_time_ms += (time.time() - ik_start) * 1000
 
-        for i in range(7):
-            print(f"Joint {i} : {ik[i]}")
-
         # 관절의 모터를 POSITION_CONTROL 모드로 설정하고, 목표 위치를 IK로 계산된 각도로 설정
         for i in range(p.getNumJoints(self.robot_id)):
             p.setJointMotorControl2(
