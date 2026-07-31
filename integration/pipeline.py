@@ -63,6 +63,10 @@ class Pipeline:
         self.processing_coords: list[tuple[float, float]] = []
         self._running = False
 
+        # 가장 최근 step_cycle() 호출에서 검출된 목록. GUI가 웹캠 미리보기 위에
+        # bbox를 겹쳐 그릴 때 재사용 — YOLO를 다시 돌리지 않기 위함.
+        self.last_detections = []
+
     def start(self) -> None:
         """루프 실행 플래그를 켭니다. GUI의 Start 버튼이 호출."""
         self._running = True
@@ -94,6 +98,7 @@ class Pipeline:
             # 실제 모드인데 프레임이 없는 경우(웹캠 아직 미연결, read() 실패 등).
             # frame=None을 그대로 넘기면 ultralytics가 번들 샘플 이미지로 조용히
             # 대체해 가짜 검출을 만들어내므로, 아예 검출을 건너뜀.
+            self.last_detections = []
             p.stepSimulation()
             time.sleep(config.SIM_TIMESTEP)
             return 0
@@ -101,6 +106,7 @@ class Pipeline:
         t0 = time.time()
         detections = self.detector.detect(frame)
         t_detect = (time.time() - t0) * 1000
+        self.last_detections = detections
 
         if not detections:
             p.stepSimulation()

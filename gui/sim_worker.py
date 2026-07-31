@@ -69,6 +69,8 @@ class SimWorker(QThread):
         self._reset_requested = False
         self._pipeline: Pipeline | None = None
         self._latest_frame = None    # WebcamWorker가 set_latest_frame()으로 채워줌 (real 모드용)
+        self.last_detections = []    # Pipeline이 계산한 최신 검출 결과. MainWindow가 웹캠 뷰에
+                                      # bbox를 그릴 때 읽어감 (YOLO 재실행 없이 재사용).
 
         # Settings 다이얼로그로 조절할 값들.
         self._target_fps = TARGET_FPS
@@ -205,6 +207,7 @@ class SimWorker(QThread):
                     last_frame_time = time.monotonic()
 
                     self.frame_ready.emit(self._capture_frame())
+                    self.last_detections = []
 
                     self._reset_requested = False
                     self._playing = False
@@ -219,6 +222,7 @@ class SimWorker(QThread):
                 # 만들어내는 걸 막기 위한 가드가 거기 있음.
                 frame = None if self._use_dummy else self._latest_frame
                 completed = self._pipeline.step_cycle(frame)
+                self.last_detections = self._pipeline.last_detections
                 step_count += 1
                 if completed:
                     summary = self._pipeline.logger.summary()
@@ -275,6 +279,7 @@ class SimWorker(QThread):
             self._pipeline.stop()
             self._pipeline.shutdown()
             self._pipeline = None
+        self.last_detections = []
 
     def _capture_frame(self) -> QImage:
         """현재 씬을 렌더링해서 QImage로 변환합니다.

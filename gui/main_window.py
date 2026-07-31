@@ -22,7 +22,7 @@ Start / Stop / Reset은 시뮬레이션에만 적용됩니다 (웹캠은 창이 
 from __future__ import annotations
 
 from PySide6.QtCore import QSettings
-from PySide6.QtGui import QAction, QImage, QPixmap, Qt
+from PySide6.QtGui import QAction, QColor, QImage, QPainter, QPen, QPixmap, Qt
 from PySide6.QtWidgets import (
     QApplication,
     QGroupBox,
@@ -36,6 +36,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
 )
 
+import config
 from gui.panels import CameraControlPanel, LogPanel, StatusPanel
 from gui.sim_worker import SimWorker
 from gui.webcam_worker import WebcamWorker
@@ -245,7 +246,27 @@ class MainWindow(QMainWindow):
         self.sim_view.setPixmap(QPixmap.fromImage(image))
 
     def _on_webcam_frame(self, image: QImage) -> None:
-        """_on_sim_frame과 동일."""
+        """웹캠 원본 프레임 위에 SimWorker(Pipeline)가 가장 최근에 계산해둔 검출
+        결과를 bbox로 겹쳐 그린 뒤 표시.
+
+        ★ 여기서 YOLO를 다시 돌리지 않음 — SimWorker가 이미 step_cycle() 안에서
+          계산해 둔 sim_worker.last_detections를 재사용만 함. bbox 좌표는
+          640x480(캡처 해상도) 기준이라 이 QImage에 그대로 그리면 맞고,
+          AspectRatioLabel이 그 이후 화면 크기에 맞게 통째로 다시 스케일링해줌.
+        ★ image는 WebcamWorker.run()에서 이미 .copy()해서 보낸, 여기서만 참조하는
+          QImage라 바로 그려도 됨(다른 곳과 공유되는 버퍼가 아님).
+        """
+        detections = self.sim_worker.last_detections
+        if detections:
+            painter = QPainter(image)
+            for det in detections:
+                x1, y1, x2, y2 = det.bbox
+                r, g, b, a = config.CATEGORY_COLORS[det.category]
+                painter.setPen(QPen(QColor.fromRgbF(r, g, b, a), 2))
+                painter.drawRect(x1, y1, x2 - x1, y2 - y1)
+                painter.drawText(x1, max(y1 - 6, 10), f"{det.category} {det.confidence:.2f}")
+            painter.end()
+
         self.webcam_view.setPixmap(QPixmap.fromImage(image))
 
     def closeEvent(self, event) -> None:
