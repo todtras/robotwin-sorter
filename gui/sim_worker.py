@@ -144,16 +144,6 @@ class SimWorker(QThread):
         ★ 이것도 GUI 스레드에서 실행되는 메서드입니다. reset_simulation()과 똑같은
           이유로, 여기서 pybullet을 직접 건드리면 안 되고 인스턴스 변수만 갱신해야
           합니다.
-
-        TODO:
-            - 넘어온 값 중 None이 아닌 것만 self._target_fps / self._camera_distance /
-              self._camera_yaw / self._camera_pitch에 반영하세요.
-            - target_fps는 run() 루프가 매 반복 self._target_fps를 직접 읽어서 쓰도록
-              바꿔뒀으니(아래 run()/FRAME_INTERVAL 부분 참고) 별도 조치 없이 바로 적용됨.
-            - distance/yaw/pitch(카메라 각도)는 _build_scene()에서 view_matrix를 만들
-              때만 쓰이므로, 값만 바꿔서는 당장 반영되지 않습니다. self._reset_requested
-              = True로 세팅해서 다음 run() 루프에서 _build_scene()이 다시 불리며 새
-              각도로 view_matrix가 재계산되게 하세요.
         """
         if target_fps is not None:
             self._target_fps = target_fps
@@ -169,11 +159,7 @@ class SimWorker(QThread):
         # 다시 계산하니 여기서 값만 갱신하면 다음 프레임부터 바로 반영됨.
 
     def get_settings(self) -> dict:
-        """Settings 다이얼로그를 열 때 현재 값으로 미리 채우기 위해 MainWindow가 호출.
-
-        TODO: {"target_fps": self._target_fps, "sim_distance": self._camera_distance,
-               "sim_yaw": self._camera_yaw, "sim_pitch": self._camera_pitch} 반환.
-        """
+        """Settings 다이얼로그를 열 때 현재 값으로 미리 채우기 위해 MainWindow가 호출."""
         return {
             "target_fps": self._target_fps,
             "sim_distance": self._camera_distance,
