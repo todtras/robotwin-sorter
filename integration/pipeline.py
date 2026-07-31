@@ -13,7 +13,7 @@ from __future__ import annotations
 import time
 import pybullet as p
 import pybullet_data
-
+import cv2
 import config
 from common.logger import SortLogger
 from common.schema import SortResult
@@ -80,6 +80,16 @@ class Pipeline:
             t0 = time.time()
             if self.camera is not None:
                 frame = self.camera.read()
+                """바운딩 박스
+                for det in detections:
+                    x1,y1,x2,y2 = det.bbox
+                    cv2.rectangle(frame, (x1, y1), (x2,y2), (0,255,0), 2)
+                    cv2.putText(frame, det.category, (x1,y1-5), 
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0,255,0), 2))
+                """
+                if frame is not None:
+                    cv2.imshow("camera", frame)
+                    cv2.waitKey(1)
             else:
                 frame = None
             detections = self.detector.detect(frame)
@@ -107,6 +117,7 @@ class Pipeline:
 
                 # ③ 스폰
                 self.processing_coords.append((wx, wy))
+                print(f"  스폰 좌표: ({wx:.3f}, {wy:.3f})")
                 task = self.spawner.spawn(det, (wx, wy))
 
                 # ④ 로봇 실행
@@ -146,7 +157,7 @@ class Pipeline:
         p.disconnect()
 
 def main() -> None:
-    pipeline = Pipeline(use_dummy=True)# 더미 on off
+    pipeline = Pipeline(use_dummy=False)# 더미 on off
     try:
         pipeline.run(max_cycles=20)
     finally:
