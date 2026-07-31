@@ -81,7 +81,9 @@ class MainWindow(QMainWindow):
         # 회사/앱 이름은 실제로 등록된 이름일 필요 없이, 이 앱만의 고유 키 역할만 함.
         self._settings = QSettings("RobotwinSorter", "RobotDashboard")
 
-        self.sim_worker = SimWorker()
+        # use_dummy=True: DummyDetector/DummyArmController로 안전하게 시작.
+        # 실제 YOLO+로봇을 붙이려면 False로 바꾸세요 (모델/캘리브레이션 준비 필요).
+        self.sim_worker = SimWorker(use_dummy=False)
         self.webcam_worker = WebcamWorker()
 
         self._build_toolbar()
@@ -206,6 +208,14 @@ class MainWindow(QMainWindow):
         self.webcam_worker.frame_ready.connect(self._on_webcam_frame)
         self.webcam_worker.log_message.connect(self.log_panel.append_log)
         self.camera_control_panel.params_changed.connect(self._on_camera_params_changed)
+
+        # 웹캠 스레드 -> Sim 스레드로 원본 프레임을 직접 전달 (GUI 스레드 안 거침).
+        # SimWorker는 자체 이벤트 루프(exec())를 안 돌리므로 큐잉 연결이 아니라
+        # DirectConnection으로 강제해야 콜백이 실제로 호출됨 — set_latest_frame()은
+        # 참조 대입만 하는 가벼운 메서드라 다른 스레드에서 직접 불러도 안전함.
+        self.webcam_worker.raw_frame_ready.connect(
+            self.sim_worker.set_latest_frame, Qt.ConnectionType.DirectConnection
+        )
 
     def _on_camera_params_changed(self, distance: float, yaw: float, pitch: float) -> None:
         """CameraControlPanel.params_changed 시그널에 연결될 슬롯."""

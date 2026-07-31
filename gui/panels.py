@@ -24,6 +24,8 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
 )
 
+import config
+
 MAX_LOG_LINES = 1000
 
 
@@ -54,34 +56,33 @@ class LogPanel(QGroupBox):
 
 
 class StatusPanel(QGroupBox):
-    """FPS / step / 물체 평균 높이 등 상태 값을 보여주는 패널.
-
-    지금은 sim_worker.py의 데모 씬(색깔 물체 여러 개, 주기적으로 리스폰) 값을
-    그대로 표시하면 됩니다. 나중에 Pipeline이 연결되면 state dict의 키(FSM 상태,
-    joint 정보 등)만 바뀌고 이 위젯 구조는 그대로 재사용할 수 있습니다.
-    """
+    """FPS / step / 누적 분류 결과 등 Pipeline 상태 값을 보여주는 패널."""
 
     def __init__(self) -> None:
         super().__init__("Status")
 
         self.fps_label = QLabel("-")
         self.step_label = QLabel("-")
-        self.avg_height_label = QLabel("-")
+        self.sorted_label = QLabel("-")
+        self.success_rate_label = QLabel("-")
 
         layout = QFormLayout(self)
         layout.addRow("FPS", self.fps_label)
         layout.addRow("Step", self.step_label)
-        layout.addRow("Avg Height", self.avg_height_label)
+        layout.addRow("Sorted", self.sorted_label)
+        layout.addRow("Success Rate", self.success_rate_label)
 
     def update_state(self, state: dict) -> None:
         """SimWorker.state_changed 시그널에 연결될 슬롯.
 
-        state는 {"fps": float, "step": int, "avg_height": float} 형태로 들어옵니다.
+        state는 {"fps": float, "step": int, "sorted": int, "success_rate": float}
+        형태로 들어옵니다 (Pipeline.logger.summary() 기반).
         """
 
         self.fps_label.setText(f"{state.get('fps', 0):.1f}")
         self.step_label.setText(str(state.get("step", 0)))
-        self.avg_height_label.setText(f"{state.get('avg_height', 0):.3f}")
+        self.sorted_label.setText(str(state.get("sorted", 0)))
+        self.success_rate_label.setText(f"{state.get('success_rate', 0):.0%}")
 
 
 class CameraControlPanel(QGroupBox):
@@ -111,20 +112,21 @@ class CameraControlPanel(QGroupBox):
     def __init__(self) -> None:
         super().__init__("Camera Control")
 
+        # 초기값은 config.SIM_CAMERA_*(로봇+수거함 전체가 보이는 기본 앵글)와 맞춤.
         self.distance_slider = QSlider(Qt.Orientation.Horizontal)
         self.distance_slider.setRange(1, 100)  # 실제 0.1 ~ 10.0
-        self.distance_slider.setValue(int(1.5 * self.DISTANCE_SCALE))
-        self.distance_value_label = QLabel("1.5")
+        self.distance_slider.setValue(int(config.SIM_CAMERA_DISTANCE * self.DISTANCE_SCALE))
+        self.distance_value_label = QLabel(f"{config.SIM_CAMERA_DISTANCE:.1f}")
 
         self.yaw_slider = QSlider(Qt.Orientation.Horizontal)
         self.yaw_slider.setRange(-180, 180)
-        self.yaw_slider.setValue(45)
-        self.yaw_value_label = QLabel("45") 
+        self.yaw_slider.setValue(int(config.SIM_CAMERA_YAW))
+        self.yaw_value_label = QLabel(f"{config.SIM_CAMERA_YAW:.0f}")
 
         self.pitch_slider = QSlider(Qt.Orientation.Horizontal)
         self.pitch_slider.setRange(-90, 90)
-        self.pitch_slider.setValue(-30)
-        self.pitch_value_label = QLabel("-30")
+        self.pitch_slider.setValue(int(config.SIM_CAMERA_PITCH))
+        self.pitch_value_label = QLabel(f"{config.SIM_CAMERA_PITCH:.0f}")
 
         distance_row = QHBoxLayout()
         distance_row.addWidget(self.distance_slider)
