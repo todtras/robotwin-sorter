@@ -46,6 +46,13 @@ FRAME_WIDTH = 320
 FRAME_HEIGHT = 240
 TARGET_FPS = 60  # 기본값. Settings 다이얼로그에서 바꾸면 인스턴스별 self._target_fps로 대체됨
 
+MOTION_REPLAY_FPS = 20
+"""로봇팔 이동 중 쌓인 프레임 큐를 재생할 때 쓰는 속도.
+★ 물리 계산 자체는 sleep 없이 원래 속도(사실상 즉시)로 끝나버려서, on_step()이
+  만든 중간 프레임들을 큐에 모아뒀다가 이 fps로 하나씩 내보냄 — sleep으로
+  스레드를 막지 않으면서도 "느리게 움직이는 것처럼" 보이게 하는 방법.
+  큐를 비우는 동안엔 target_fps 대신 이 값을 씀 (더 낮은 fps = 더 느린 재생)."""
+
 
 class SimWorker(QThread):
     """Pipeline 루프를 도는 워커 스레드.
@@ -71,6 +78,10 @@ class SimWorker(QThread):
         self._latest_frame = None    # WebcamWorker가 set_latest_frame()으로 채워줌 (real 모드용)
         self.last_detections = []    # Pipeline이 계산한 최신 검출 결과. MainWindow가 웹캠 뷰에
                                       # bbox를 그릴 때 읽어감 (YOLO 재실행 없이 재사용).
+        self._motion_frame_queue: list[QImage] = []
+        """로봇팔이 이동하는 동안 on_step()이 캡처해둔 중간 프레임들.
+        step_cycle() 자체는 sleep 없이 빠르게 끝나므로, 여기 쌓인 프레임을
+        run() 루프가 MOTION_REPLAY_FPS 속도로 하나씩 꺼내 내보내면서 재생함."""
 
         # Settings 다이얼로그로 조절할 값들.
         self._target_fps = TARGET_FPS
@@ -208,6 +219,7 @@ class SimWorker(QThread):
 
                     self.frame_ready.emit(self._capture_frame())
                     self.last_detections = []
+                    self._motion_frame_queue = []
 
                     self._reset_requested = False
                     self._playing = False
@@ -221,7 +233,20 @@ class SimWorker(QThread):
                 # 건너뜀 — ultralytics가 None을 번들 샘플 이미지로 대체해 가짜 검출을
                 # 만들어내는 걸 막기 위한 가드가 거기 있음.
                 frame = None if self._use_dummy else self._latest_frame
-                completed = self._pipeline.step_cycle(frame)
+                # 로봇팔이 목표까지 이동하는 동안 STREAM_EVERY_N_STEPS 스텝마다 이
+                # 콜백이 불려서 중간 프레임을 큐에 쌓음(캡처만, sleep 없음 -> 이
+                # 스레드가 안 막힘). 쌓인 프레임은 아래에서 MOTION_REPLAY_FPS
+                # 속도로 하나씩 꺼내 내보내면서 재생됨.
+                # ★ 큐 상한: Pipeline.sorted_coords가 같은 좌표 재처리를 막아주긴
+                #   하지만(물체 하나당 task 1번), 여러 물체가 동시에 있는 경우 등을
+                #   대비한 안전장치로 남겨둠. 너무 크게 잡으면 물체를 실제로 치운
+                #   뒤에도 큐에 쌓인 지난 프레임들이 다 빠질 때까지 "그때 그 장면"이
+                #   계속 재생돼서 실시간처럼 안 느껴짐 — 대략 작업 2개 분량으로 제한.
+                def _queue_motion_frame() -> None:
+                    if len(self._motion_frame_queue) < 80:
+                        self._motion_frame_queue.append(self._capture_frame())
+
+                completed = self._pipeline.step_cycle(frame, on_step=_queue_motion_frame)
                 self.last_detections = self._pipeline.last_detections
                 step_count += 1
                 if completed:
@@ -236,8 +261,17 @@ class SimWorker(QThread):
                 # 무관하게 항상 목표 fps에 가깝게 프레임이 나옴.
                 # self._target_fps를 매번 다시 읽으므로 apply_settings()로 바꾼 값이
                 # 다음 반복부터 바로 반영됨 (모듈 상수 FRAME_INTERVAL 대신 사용).
-                if now - last_frame_time >= 1.0 / self._target_fps:
-                    self.frame_ready.emit(self._capture_frame())
+                # 큐에 재생할 프레임이 남아있으면 target_fps 대신 더 느린
+                # MOTION_REPLAY_FPS로 하나씩 꺼내 보임 -> 로봇팔 이동이 실제
+                # 속도가 아니라 이 속도로 "재생"되는 것처럼 보임.
+                replay_interval = (
+                    1.0 / MOTION_REPLAY_FPS if self._motion_frame_queue else 1.0 / self._target_fps
+                )
+                if now - last_frame_time >= replay_interval:
+                    if self._motion_frame_queue:
+                        self.frame_ready.emit(self._motion_frame_queue.pop(0))
+                    else:
+                        self.frame_ready.emit(self._capture_frame())
                     frames_since_fps += 1
                     last_frame_time = now
 
@@ -280,6 +314,7 @@ class SimWorker(QThread):
             self._pipeline.shutdown()
             self._pipeline = None
         self.last_detections = []
+        self._motion_frame_queue = []
 
     def _capture_frame(self) -> QImage:
         """현재 씬을 렌더링해서 QImage로 변환합니다.

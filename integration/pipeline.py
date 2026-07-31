@@ -33,6 +33,13 @@ from robot.scene import Scene
 from tests.dummy_robot import DummyArmController
 from tests.dummy_vision import DummyDetector
 
+SORTED_COOLDOWN_SEC = 5.0
+"""한 번 분류한 좌표는 이 시간 동안만 재검출을 무시합니다 (영구 아님).
+같은 물체가 계속 웹캠에 잡혀서 매 프레임 재처리되는 건 막으면서도, 그 자리에
+사람이 다른 물체를 새로 놓으면 이 시간이 지난 뒤엔 다시 정상 인식되게 하기
+위함. 너무 짧으면 같은 프레임 연속 재검출을 못 거르고(원래 문제), 너무 길면
+물체를 빨리 교체했을 때 한동안 무시됨."""
+
 
 class Pipeline:
     """전체 시스템 메인 루프."""
@@ -59,8 +66,15 @@ class Pipeline:
 
         self._use_dummy = use_dummy
 
-        # 중복 처리 방지용
+        # 중복 처리 방지용 (동시 처리 중인 좌표. task 끝나면 바로 빠짐)
         self.processing_coords: list[tuple[float, float]] = []
+        # 이미 분류를 마친(성공/실패 무관) 좌표 + 처리 시각. SORTED_COOLDOWN_SEC
+        # 동안만 재검출을 무시함 (영구 아님 — 그 자리에 새 물체를 놓으면 쿨다운
+        # 지난 뒤 다시 인식됨). ★ 이게 없으면 웹캠이 보는 실제 물체가 안
+        # 치워지는 한 매 프레임 같은 좌표가 계속 "새 검출"로 들어와서 무한정
+        # 재처리됨 (대시보드에서 "분류 완료"가 초당 수십 번씩 뜨던 원인).
+        # Reset하면 Pipeline을 새로 만드니 자연히 비워짐.
+        self.sorted_coords: list[tuple[float, float, float]] = []
         self._running = False
 
         # 가장 최근 step_cycle() 호출에서 검출된 목록. GUI가 웹캠 미리보기 위에
@@ -80,18 +94,32 @@ class Pipeline:
         self._running = False
 
     def is_duplicate(self, wx: float, wy: float) -> bool:
-        """이미 처리 중인 좌표 근처인지 확인."""
+        """이미 처리 중이거나(동시성), 쿨다운이 안 지난 좌표 근처인지 확인."""
+        now = time.time()
+        # 만료된 항목은 여기서 같이 청소 (호출될 때마다 자연히 정리되므로
+        # sorted_coords가 무한정 커지지 않음).
+        self.sorted_coords = [
+            (cx, cy, t) for cx, cy, t in self.sorted_coords if now - t < SORTED_COOLDOWN_SEC
+        ]
+
         for cx, cy in self.processing_coords:
+            dist = ((wx - cx) ** 2 + (wy - cy) ** 2) ** 0.5
+            if dist < config.DUPLICATE_RADIUS_M:
+                return True
+        for cx, cy, _ in self.sorted_coords:
             dist = ((wx - cx) ** 2 + (wy - cy) ** 2) ** 0.5
             if dist < config.DUPLICATE_RADIUS_M:
                 return True
         return False
 
-    def step_cycle(self, frame=None) -> int:
+    def step_cycle(self, frame=None, on_step=None) -> int:
         """검출 -> 처리 한 사이클. CLI(run())와 GUI(SimWorker.run()) 양쪽이
         이 메서드를 반복 호출합니다.
 
         frame: BGR numpy 프레임. 더미 모드에서는 detector가 무시하므로 None이어도 됨.
+        on_step: 로봇팔 이동 중간중간 호출되는 콜백 (arm.execute_task()로 그대로
+          전달됨). GUI가 이동 과정을 화면에 스트리밍할 때 씀 — CLI 등 안 쓰는
+          쪽은 None으로 두면 됨.
         반환값: 이번 호출에서 완료(성공/실패 로깅까지 끝)된 분류 작업 수.
         """
         if not self._use_dummy and frame is None:
@@ -140,18 +168,28 @@ class Pipeline:
                 task = self.spawner.spawn(det, (wx, wy))
 
                 t2 = time.time()
-                ok = self.arm.execute_task(task)
+                ok = self.arm.execute_task(task, on_step=on_step)
                 t_execute = (time.time() - t2) * 1000
+
+                if ok:
+                    fail_reason = None
+                else:
+                    # ArmController는 FSM 어느 단계에서 막혔는지(예: "timeout :
+                    # move_to_bin")를 last_result에 담아둠. 없으면(DummyArmController)
+                    # 뭉뚱그려 "timeout"으로 표시.
+                    arm_last_result = getattr(self.arm, "last_result", None)
+                    fail_reason = arm_last_result.fail_reason if arm_last_result else "timeout"
 
                 result = SortResult(
                     task=task,
                     success=ok,
-                    fail_reason=None if ok else "timeout",
+                    fail_reason=fail_reason,
                     t_detect_ms=t_detect,
                     t_transform_ms=t_transform,
                     t_execute_ms=t_execute,
                 )
                 self.logger.record(result)
+                self.sorted_coords.append((wx, wy, time.time()))  # 성공/실패 무관 — 쿨다운 동안 재처리 방지
 
                 completed += 1
                 print(f"  {det.category} -> {task.target_bin} | {'OK' if ok else 'FAIL'}")
