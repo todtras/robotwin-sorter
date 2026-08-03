@@ -59,11 +59,22 @@ class TrashDetector:
 
 if __name__ == "__main__":
     """실시간 프리뷰: python -m vision.detector 로 실행.
-    웹캠 프레임을 detect()에 넣고 draw()로 bbox 오버레이를 확인합니다. Q로 종료."""
+    웹캠 프레임을 detect()에 넣고 draw()로 bbox 오버레이를 확인합니다. Q로 종료.
+
+    ★ 테스트용 임시 히스테리시스: confidence가 CONF_THRESHOLD 근처에서
+      깜빡이는 걸 눈으로 덜 거슬리게 보려고 카테고리 단위로 연속 프레임
+      조건을 걸어둔 것. 실제 시스템 반영은 vision/stabilizer.py에서 한다.
+    """
     from vision.camera import Camera
 
+    CONFIRM_FRAMES = 3   # 연속 이만큼 검출돼야 "확정"
+    RELEASE_FRAMES = 3   # 연속 이만큼 안 잡혀야 "해제"
+
     detector = TrashDetector()
-    seen_categories: set[str] = set()
+    present_streak: dict[str, int] = {}
+    absent_streak: dict[str, int] = {}
+    confirmed: set[str] = set()
+
     with Camera() as cam:
         print(f"[detector] model={detector.model_path} 실행 중. 창에서 Q를 누르면 종료.")
         while True:
@@ -73,15 +84,25 @@ if __name__ == "__main__":
                 break
             detections = detector.detect(frame)
             current_categories = {d.category for d in detections}
-            # 시간 간격이 아니라 "직전 프레임엔 없던 카테고리가 이번 프레임에 처음 등장"할 때만 출력.
-            # 같은 카테고리가 계속 검출 중이면(위치만 바뀌어도) 다시 안 찍히고,
-            # 검출이 한 프레임이라도 끊겼다가 재검출되면 다시 찍힌다.
-            for cat in current_categories - seen_categories:
-                det = next(d for d in detections if d.category == cat)
-                print(f"[detector] 폐기물 검출: {cat} (conf={det.confidence:.2f}, "
-                      f"bbox={det.bbox}, frame_shape={frame.shape})")
-            seen_categories = current_categories
-            vis = detector.draw(frame, detections)
+            tracked_categories = set(present_streak) | set(absent_streak) | current_categories
+
+            for cat in tracked_categories:
+                if cat in current_categories:
+                    present_streak[cat] = present_streak.get(cat, 0) + 1
+                    absent_streak[cat] = 0
+                    if cat not in confirmed and present_streak[cat] >= CONFIRM_FRAMES:
+                        confirmed.add(cat)
+                        det = next(d for d in detections if d.category == cat)
+                        print(f"[detector] 폐기물 검출: {cat} (conf={det.confidence:.2f}, "
+                              f"bbox={det.bbox}, frame_shape={frame.shape})")
+                else:
+                    present_streak[cat] = 0
+                    absent_streak[cat] = absent_streak.get(cat, 0) + 1
+                    if cat in confirmed and absent_streak[cat] >= RELEASE_FRAMES:
+                        confirmed.discard(cat)
+
+            display_detections = [d for d in detections if d.category in confirmed]
+            vis = detector.draw(frame, display_detections)
             cv2.imshow("detector preview (Q=quit)", vis)
             if cv2.waitKey(1) & 0xFF == ord("q"):
                 break
