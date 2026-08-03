@@ -11,6 +11,9 @@ opencv-python==4.10.0.84
 numpy>=1.24,<2.0
 matplotlib>=3.7
 
+# gui/ 대시보드 실험용 (experiment/qt-dashboard 브랜치)
+PySide6>=6.6
+
 # 추론 전용. 학습은 Colab에서 합니다.
 # 설치 용량이 2GB+ 라 사내 정책에 막힐 수 있습니다.
 # 막히면 ONNX 내보내기 후 onnxruntime으로 대체하세요 (훨씬 가볍습니다).
