@@ -33,12 +33,17 @@ from robot.scene import Scene
 from tests.dummy_robot import DummyArmController
 from tests.dummy_vision import DummyDetector
 
-SORTED_COOLDOWN_SEC = 5.0
+SORTED_COOLDOWN_SEC = 1.0
 """한 번 분류한 좌표는 이 시간 동안만 재검출을 무시합니다 (영구 아님).
 같은 물체가 계속 웹캠에 잡혀서 매 프레임 재처리되는 건 막으면서도, 그 자리에
 사람이 다른 물체를 새로 놓으면 이 시간이 지난 뒤엔 다시 정상 인식되게 하기
 위함. 너무 짧으면 같은 프레임 연속 재검출을 못 거르고(원래 문제), 너무 길면
-물체를 빨리 교체했을 때 한동안 무시됨."""
+물체를 빨리 교체했을 때 한동안 무시됨.
+★ 5.0 -> 1.0으로 낮춤. 실제 재처리 간격은 이 값 단독이 아니라
+  "로봇팔 작업시간(보통 1.5~4초) + 이 값"이라, 원래 막으려던 버그(초당
+  수십 번 재처리)는 작업시간 자체가 이미 1초 이상이라 재발 위험이 낮음.
+  줄인 이유: 같은 자리에 물체를 새로 놓아도 5초 쿨다운 동안 반응이
+  없는 것처럼 보이는 문제(=오검출이 아니라 의도된 dedup) 완화."""
 
 
 class Pipeline:
@@ -80,6 +85,13 @@ class Pipeline:
         # 가장 최근 step_cycle() 호출에서 검출된 목록. GUI가 웹캠 미리보기 위에
         # bbox를 겹쳐 그릴 때 재사용 — YOLO를 다시 돌리지 않기 위함.
         self.last_detections = []
+
+        # config.DETECT_EVERY_N_FRAMES 프레임마다 한 번만 YOLO를 돌리기 위한 카운터.
+        self._frame_counter = 0
+        # 가장 최근 "실제로" detect()를 호출했을 때 걸린 시간(ms). 건너뛴 사이클엔
+        # 이 값을 그대로 재사용해서 로깅함 — 0.0으로 찍으면 실험 3(지연시간 분해)
+        # CSV의 평균 t_detect_ms가 1/N만큼 희석돼 실제보다 낮게 왜곡되기 때문.
+        self._last_t_detect_ms = 0.0
 
     def start(self) -> None:
         """루프 실행 플래그를 켭니다. GUI의 Start 버튼이 호출."""
@@ -131,10 +143,24 @@ class Pipeline:
             time.sleep(config.SIM_TIMESTEP)
             return 0
 
-        t0 = time.time()
-        detections = self.detector.detect(frame)
-        t_detect = (time.time() - t0) * 1000
-        self.last_detections = detections
+        # ★ 1순위 최적화: YOLO 추론이 CPU에서 프레임당 수십 ms가 걸려 이게 곧
+        #   대시보드 fps의 상한이 됨. config.DETECT_EVERY_N_FRAMES마다 한 번만
+        #   실제로 추론하고, 나머지 프레임은 last_detections(직전 결과)를 그대로
+        #   재사용 — 물체가 그 사이 몇 cm 이상 움직이진 않으므로 정확도 손해는
+        #   거의 없이 추론 횟수를 1/N로 줄임. 더미 모드는 detect()가 사실상
+        #   공짜라 건너뛸 이유가 없으므로 매 프레임 그대로 돌림.
+        self._frame_counter += 1
+        should_detect = self._use_dummy or self._frame_counter % config.DETECT_EVERY_N_FRAMES == 0
+
+        if should_detect:
+            t0 = time.time()
+            detections = self.detector.detect(frame)
+            t_detect = (time.time() - t0) * 1000
+            self.last_detections = detections
+            self._last_t_detect_ms = t_detect
+        else:
+            detections = self.last_detections
+            t_detect = self._last_t_detect_ms  # 직전 실측값 재사용 (0.0으로 찍으면 로그 왜곡됨)
 
         if not detections:
             p.stepSimulation()

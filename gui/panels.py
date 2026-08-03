@@ -15,16 +15,21 @@ from __future__ import annotations
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QFontDatabase
 from PySide6.QtWidgets import (
+    QComboBox,
     QFormLayout,
     QGroupBox,
     QHBoxLayout,
     QLabel,
     QPlainTextEdit,
     QSlider,
+    QSpinBox,
     QVBoxLayout,
 )
 
 import config
+from gui.sim_worker import FRAME_HEIGHT as _DEFAULT_FRAME_HEIGHT
+from gui.sim_worker import FRAME_WIDTH as _DEFAULT_FRAME_WIDTH
+from gui.sim_worker import TARGET_FPS as _DEFAULT_TARGET_FPS
 
 MAX_LOG_LINES = 1000
 
@@ -83,6 +88,65 @@ class StatusPanel(QGroupBox):
         self.step_label.setText(str(state.get("step", 0)))
         self.sorted_label.setText(str(state.get("sorted", 0)))
         self.success_rate_label.setText(f"{state.get('success_rate', 0):.0%}")
+
+
+class RenderQualityPanel(QGroupBox):
+    """시뮬레이션 패널의 pybullet 렌더 해상도를 고르는 패널 (화질 <-> fps 트레이드오프).
+
+    ★ 웹캠/검출 해상도(config.FRAME_WIDTH/HEIGHT, config.INFERENCE_IMGSZ)와는
+      완전히 무관합니다 — 이건 순수하게 "Simulation" 패널을 그리는 데 쓰는
+      p.getCameraImage() 해상도만 바꿉니다. gui/sim_worker.py 실측 결과 이
+      호출 자체가 idle 상태 fps의 실질적인 상한이라, 낮출수록 fps는 오르고
+      화질은 거칠어짐.
+
+    Signals:
+        resolution_changed(int, int): (width, height). MainWindow가 이걸 받아서
+            sim_worker.apply_settings(frame_width=..., frame_height=...)를 호출.
+    """
+
+    resolution_changed = Signal(int, int)
+
+    PRESETS: list[tuple[str, int, int]] = [
+        ("160x120", 160, 120),
+        ("240x180", 240, 180),
+        ("320x240", 320, 240),
+    ]
+    """★ "(Fast)"/"(Balanced)"/"(Best quality)" 설명을 뺌 — 콤보박스 자체 너비가
+    가장 긴 항목 기준으로 정해지는데, 이 문구들 때문에 옵션바 전체가 필요
+    이상으로 넓어짐. 숫자만으로도 뭘 고르는지는 충분히 명확함."""
+
+    def __init__(self) -> None:
+        super().__init__("Render Quality")
+
+        self.resolution_combo = QComboBox()
+        for label, _w, _h in self.PRESETS:
+            self.resolution_combo.addItem(label)
+        self.set_resolution(_DEFAULT_FRAME_WIDTH, _DEFAULT_FRAME_HEIGHT)  # sim_worker 기본값과 동기화
+
+        # ★ QFormLayout(라벨|콤보 한 줄)이었다가 세로로 쌓는 방식으로 변경 —
+        #   "320x240 (Best quality)" 같은 긴 항목 때문에 콤보박스 자체 너비가
+        #   이미 넉넉히 필요한데, 라벨까지 옆에 붙이면 옵션바 전체 폭이 그만큼
+        #   더 벌어짐. 라벨을 위로 올리면 그 폭을 안 더해도 됨.
+        layout = QVBoxLayout(self)
+        layout.addWidget(QLabel("Sim Resolution"))
+        layout.addWidget(self.resolution_combo)
+
+        self.resolution_combo.currentIndexChanged.connect(self._emit_resolution)
+
+    def set_resolution(self, width: int, height: int) -> None:
+        """MainWindow가 시작 시 현재 sim_worker 값으로 콤보박스를 맞춰둘 때 호출.
+
+        ★ setCurrentIndex()도 CameraControlPanel.set_values()처럼 currentIndexChanged를
+          다시 emit할 수 있음 — 지금 단계에선 무시해도 되는 수준.
+        """
+        for i, (_label, w, h) in enumerate(self.PRESETS):
+            if (w, h) == (width, height):
+                self.resolution_combo.setCurrentIndex(i)
+                return
+
+    def _emit_resolution(self, index: int) -> None:
+        _label, width, height = self.PRESETS[index]
+        self.resolution_changed.emit(width, height)
 
 
 class CameraControlPanel(QGroupBox):
@@ -189,3 +253,99 @@ class CameraControlPanel(QGroupBox):
         self.pitch_value_label.setText(f"{pitch:.0f}")
 
         self.params_changed.emit(distance, yaw, pitch)
+
+
+class ConfThresholdPanel(QGroupBox):
+    """YOLO 검출 confidence 임계값을 실시간으로 조절하는 패널.
+
+    ★ config.CONF_THRESHOLD를 고치고 재시작하는 대신 데모 중 그 자리에서
+      튜닝할 수 있게 함 — 카메라 도메인 미스매치 때문에 이 값이 조명/각도에
+      따라 자주 움직이는 타겟이라(config.py 주석 참고).
+
+    Signals:
+        threshold_changed(float): 0.0~1.0. MainWindow가 받아서
+            sim_worker.apply_settings(conf_threshold=...)를 호출.
+    """
+
+    threshold_changed = Signal(float)
+
+    SCALE = 100  # 슬라이더 int 값 <-> 실제 threshold(float) 변환 배율
+
+    def __init__(self) -> None:
+        super().__init__("Confidence")  # ★ "Confidence Threshold"는 그룹박스 제목 중 가장 길어서
+                                          #   옵션바 폭을 그거 하나가 늘려버림 -> 줄임
+
+        self.threshold_slider = QSlider(Qt.Orientation.Horizontal)
+        self.threshold_slider.setRange(0, 100)
+        self.threshold_slider.setValue(int(config.CONF_THRESHOLD * self.SCALE))
+        self.threshold_value_label = QLabel(f"{config.CONF_THRESHOLD:.2f}")
+
+        row = QHBoxLayout()
+        row.addWidget(self.threshold_slider)
+        row.addWidget(self.threshold_value_label)
+        row.addStretch(1)
+
+        layout = QVBoxLayout(self)
+        layout.addLayout(row)
+
+        self.threshold_slider.valueChanged.connect(self._emit_threshold)
+
+    def _emit_threshold(self, value: int) -> None:
+        threshold = value / self.SCALE
+        self.threshold_value_label.setText(f"{threshold:.2f}")
+        self.threshold_changed.emit(threshold)
+
+
+class TargetFpsPanel(QGroupBox):
+    """대시보드 목표 fps(SimWorker._target_fps) 조절 패널.
+
+    ★ 로봇팔이 이동 중이면 이 값 대신 MOTION_REPLAY_FPS가 우선 적용됨 —
+      이 값은 "아무것도 안 움직이는(idle) 상태"의 재생 상한만 결정함
+      (gui/sim_worker.py의 replay_interval 계산 참고).
+
+    Signals:
+        target_fps_changed(int): MainWindow가 받아서
+            sim_worker.apply_settings(target_fps=...)를 호출.
+    """
+
+    target_fps_changed = Signal(int)
+
+    def __init__(self) -> None:
+        super().__init__("Target FPS")
+
+        self.fps_spin = QSpinBox()
+        self.fps_spin.setRange(5, 120)
+        self.fps_spin.setValue(_DEFAULT_TARGET_FPS)
+
+        layout = QHBoxLayout(self)
+        layout.addWidget(self.fps_spin)
+        layout.addStretch(1)
+
+        self.fps_spin.valueChanged.connect(self.target_fps_changed.emit)
+
+
+class SettingsPanel(QGroupBox):
+    """대시보드 사용 중 자주 조절하는 값들(카메라 각도, 시뮬 해상도, 검출
+    confidence 등)을 세로로 길게 모아둔 패널. 화면 가장 오른쪽에 전체 높이로
+    배치해서 항상 접근 가능하게 함.
+
+    ★ 하위 패널(target_fps/render_quality/camera_control/conf_threshold)은 각자의
+      시그널을 그대로 노출함 — MainWindow가 self.settings_panel.camera_control처럼
+      접근해서 연결. 조절 항목을 더 추가하고 싶으면 여기 __init__에 패널
+      하나 만들어서 addWidget()만 하면 됨.
+    """
+
+    def __init__(self) -> None:
+        super().__init__("Settings")
+
+        self.target_fps = TargetFpsPanel()
+        self.render_quality = RenderQualityPanel()
+        self.camera_control = CameraControlPanel()
+        self.conf_threshold = ConfThresholdPanel()
+
+        layout = QVBoxLayout(self)
+        layout.addWidget(self.target_fps)
+        layout.addWidget(self.render_quality)
+        layout.addWidget(self.camera_control)
+        layout.addWidget(self.conf_threshold)
+        layout.addStretch(1)  # 남는 세로 공간은 아래로 몰아서 패널들이 위로 붙게 함

@@ -37,7 +37,7 @@ from PySide6.QtWidgets import (
 )
 
 import config
-from gui.panels import CameraControlPanel, LogPanel, StatusPanel
+from gui.panels import LogPanel, SettingsPanel, StatusPanel
 from gui.sim_worker import SimWorker
 from gui.webcam_worker import WebcamWorker
 
@@ -52,9 +52,17 @@ class AspectRatioLabel(QLabel):
     비율을 유지한 채 크기가 따라오게 만듭니다.
     """
 
-    def __init__(self, placeholder_text: str = "") -> None:
+    def __init__(
+        self,
+        placeholder_text: str = "",
+        transformation_mode: Qt.TransformationMode = Qt.TransformationMode.FastTransformation,
+    ) -> None:
         super().__init__(placeholder_text)
         self._original_pixmap: QPixmap | None = None
+        self._transformation_mode = transformation_mode
+        """FastTransformation: 매 프레임 스케일링 비용 절감(화질은 거칠어짐) — 웹캠처럼
+        원본 해상도가 이미 높은 경우 기본값. SmoothTransformation: 원본이 저해상도라
+        업스케일 티가 많이 날 때(예: 160x120 시뮬레이션 렌더) 화질 우선."""
 
     def setPixmap(self, pixmap: QPixmap) -> None:
         self._original_pixmap = pixmap
@@ -69,7 +77,7 @@ class AspectRatioLabel(QLabel):
             super().setPixmap(self._original_pixmap.scaled(
                 self.size(),
                 Qt.AspectRatioMode.KeepAspectRatio,
-                Qt.TransformationMode.FastTransformation,  # 매 프레임 스케일링 비용 절감(화질은 약간 거칠어짐)
+                self._transformation_mode,
             ))
 
 
@@ -127,11 +135,16 @@ class MainWindow(QMainWindow):
     def _build_central_widget(self) -> None:
         """중앙 시뮬레이션 화면 + 웹캠 화면 + 로그/상태 패널 레이아웃."""
 
-        self.sim_view = AspectRatioLabel("Waiting for simulation...")
+        # 시뮬레이션 화면은 저해상도 렌더(RenderQualityPanel로 조절)를 큰 패널로
+        # 확대하는 거라 SmoothTransformation으로 화질을 우선함 (웹캠은 원본이
+        # 640x480이라 기본값 유지).
+        self.sim_view = AspectRatioLabel(
+            "Waiting for simulation...", transformation_mode=Qt.TransformationMode.SmoothTransformation
+        )
         self.webcam_view = AspectRatioLabel("Waiting for camera...")
         self.log_panel = LogPanel()
         self.status_panel = StatusPanel()
-        self.camera_control_panel = CameraControlPanel()
+        self.settings_panel = SettingsPanel()
 
         sim_group = QGroupBox("Simulation")
         QVBoxLayout(sim_group).addWidget(self.sim_view)
@@ -160,18 +173,25 @@ class MainWindow(QMainWindow):
         self.sim_webcam_splitter.addWidget(webcam_group)
 
         self.log_status_splitter = QSplitter(Qt.Orientation.Horizontal)
-        self.log_status_splitter.addWidget(self.camera_control_panel)
         self.log_status_splitter.addWidget(self.log_panel)
         self.log_status_splitter.addWidget(self.status_panel)
 
-        self.main_splitter = QSplitter(Qt.Orientation.Vertical, self)
+        self.main_splitter = QSplitter(Qt.Orientation.Vertical)
         self.main_splitter.addWidget(self.sim_webcam_splitter)
         self.main_splitter.addWidget(self.log_status_splitter)
-        # 초기 비율(저장된 레이아웃이 없는 첫 실행 기준): 위(시뮬/카메라)는 크게,
+        # 초기 비율(저장된 레이아웃이 없는 첫 실행 기준): 위(시뮬/웹캠)는 크게,
         # 아래(로그/상태)는 작게. _restore_layout()이 저장된 값이 있으면 이걸
         # 덮어씁니다.
         self.main_splitter.setSizes([600, 150])
-        self.setCentralWidget(self.main_splitter)
+
+        # settings_panel(카메라/해상도/confidence 등 조절 패널)을 화면 가장
+        # 오른쪽에 전체 높이로 배치 — main_splitter 전체와 나란히 두는 가장
+        # 바깥쪽 가로 splitter.
+        self.root_splitter = QSplitter(Qt.Orientation.Horizontal, self)
+        self.root_splitter.addWidget(self.main_splitter)
+        self.root_splitter.addWidget(self.settings_panel)
+        self.root_splitter.setSizes([1000, 260])
+        self.setCentralWidget(self.root_splitter)
 
     def _restore_layout(self) -> None:
         """이전에 저장해둔 창 크기/splitter 비율이 있으면 복원.
@@ -185,6 +205,7 @@ class MainWindow(QMainWindow):
             self.restoreGeometry(geometry)
 
         for key, splitter in (
+            ("layout/root_splitter", self.root_splitter),
             ("layout/main_splitter", self.main_splitter),
             ("layout/sim_webcam_splitter", self.sim_webcam_splitter),
             ("layout/log_status_splitter", self.log_status_splitter),
@@ -197,6 +218,7 @@ class MainWindow(QMainWindow):
         """창 닫을 때 지금 창 크기/splitter 비율을 저장. 다음 실행 때 _restore_layout()이
         이 값을 읽어서 그대로 복원함."""
         self._settings.setValue("window/geometry", self.saveGeometry())
+        self._settings.setValue("layout/root_splitter", self.root_splitter.saveState())
         self._settings.setValue("layout/main_splitter", self.main_splitter.saveState())
         self._settings.setValue("layout/sim_webcam_splitter", self.sim_webcam_splitter.saveState())
         self._settings.setValue("layout/log_status_splitter", self.log_status_splitter.saveState())
@@ -209,7 +231,10 @@ class MainWindow(QMainWindow):
         self.sim_worker.log_message.connect(self.log_panel.append_log)
         self.webcam_worker.frame_ready.connect(self._on_webcam_frame)
         self.webcam_worker.log_message.connect(self.log_panel.append_log)
-        self.camera_control_panel.params_changed.connect(self._on_camera_params_changed)
+        self.settings_panel.target_fps.target_fps_changed.connect(self._on_target_fps_changed)
+        self.settings_panel.camera_control.params_changed.connect(self._on_camera_params_changed)
+        self.settings_panel.render_quality.resolution_changed.connect(self._on_resolution_changed)
+        self.settings_panel.conf_threshold.threshold_changed.connect(self._on_conf_threshold_changed)
 
         # 웹캠 스레드 -> Sim 스레드로 원본 프레임을 직접 전달 (GUI 스레드 안 거침).
         # SimWorker는 자체 이벤트 루프(exec())를 안 돌리므로 큐잉 연결이 아니라
@@ -219,10 +244,25 @@ class MainWindow(QMainWindow):
             self.sim_worker.set_latest_frame, Qt.ConnectionType.DirectConnection
         )
 
+    def _on_target_fps_changed(self, target_fps: int) -> None:
+        """TargetFpsPanel.target_fps_changed 시그널에 연결될 슬롯."""
+
+        self.sim_worker.apply_settings(target_fps=target_fps)
+
     def _on_camera_params_changed(self, distance: float, yaw: float, pitch: float) -> None:
         """CameraControlPanel.params_changed 시그널에 연결될 슬롯."""
 
         self.sim_worker.apply_settings(distance=distance, yaw=yaw, pitch=pitch)
+
+    def _on_resolution_changed(self, width: int, height: int) -> None:
+        """RenderQualityPanel.resolution_changed 시그널에 연결될 슬롯."""
+
+        self.sim_worker.apply_settings(frame_width=width, frame_height=height)
+
+    def _on_conf_threshold_changed(self, threshold: float) -> None:
+        """ConfThresholdPanel.threshold_changed 시그널에 연결될 슬롯."""
+
+        self.sim_worker.apply_settings(conf_threshold=threshold)
 
     def _reconnect_webcam(self) -> None:
         """Reconnect 버튼 클릭 시 호출. 새 인덱스로 웹캠 스레드를 재시작.

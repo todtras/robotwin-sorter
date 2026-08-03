@@ -15,7 +15,7 @@ import config
 from common.schema import FailReason, SortResult, SortTask
 from robot.fsm import RobotState
 
-STREAM_EVERY_N_STEPS = 4
+STREAM_EVERY_N_STEPS = 2
 """move_to() 이동 중 on_step 콜백을 몇 스텝마다 부를지.
 ★ 이 콜백 안에서 sleep을 걸어 실시간 페이싱을 했었는데, move_to()가
   SimWorker의 작업 스레드 안에서 그대로 blocking되는 바람에 FPS 계산/상태
@@ -23,7 +23,10 @@ STREAM_EVERY_N_STEPS = 4
   여기선 절대 sleep하지 않고, 물리는 원래 속도(사실상 즉시)로 계산만 하고
   프레임 캡처 타이밍(=몇 스텝마다 콜백을 부를지)만 잘게 쪼갬. "느리게 보이게"
   하는 건 SimWorker 쪽에서 이 콜백이 만든 프레임들을 큐에 쌓아뒀다가 논블로킹
-  으로 천천히 흘려보내는 방식으로 처리함 (gui/sim_worker.py 참고)."""
+  으로 천천히 흘려보내는 방식으로 처리함 (gui/sim_worker.py 참고).
+★ gui/sim_worker.py의 MOTION_REPLAY_FPS와 2배씩 같이 조절할 것 — 캡처 밀도와
+  재생 속도를 같은 비율로 올리면 재생 "시간"은 그대로 유지한 채 프레임 밀도만
+  올라가서 더 매끄럽게 보임 (재생 속도만 올리면 그냥 더 빨리 끝나 보일 뿐)."""
 
 
 class ArmController:

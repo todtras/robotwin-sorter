@@ -53,7 +53,7 @@ DOCS_DIR = PROJECT_ROOT / "docs"
 #   해상도가 다르면 인식률이 눈에 띄게 떨어집니다.
 #   그래서 두 파일 모두 이 상수를 import해서 씁니다.
 
-CAMERA_INDEX = 1
+CAMERA_INDEX = 0
 """cv2.VideoCapture()에 넘길 장치 번호.
 노트북 내장 캠이 0, USB 웹캠을 꽂으면 1인 경우가 많습니다.
 안 잡히면 0, 1, 2를 차례로 시도해 보고 각자 환경에 맞게 조정하세요."""
