@@ -80,7 +80,7 @@ CONF_THRESHOLD = 0.4
 - 조정 근거는 runs/train/PR_curve.png를 보고 정하면 보고서에 쓸 수 있습니다.
 """
 
-INFERENCE_IMGSZ = 320
+INFERENCE_IMGSZ = 640
 """추론 입력 크기. 학습 때의 imgsz와 같은 값을 쓰세요.
 640 대비 약 2배 빠릅니다. 탑다운 뷰라 물체가 크게 찍혀 320으로 충분합니다.
 실험 3에서 320 vs 640 트레이드오프를 비교합니다."""
