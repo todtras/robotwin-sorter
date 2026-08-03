@@ -29,6 +29,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QMainWindow,
+    QMessageBox,
     QPushButton,
     QSpinBox,
     QSplitter,
@@ -96,6 +97,9 @@ class MainWindow(QMainWindow):
         self.sim_worker = SimWorker(use_dummy=False)
         self.webcam_worker = WebcamWorker()
 
+        self._stop_click_count = 0  # ★ 이스터에그: Stop 연속 10번 누르면 팀 소개 표시
+        """Start를 누르면 0으로 리셋됨 -> "연속"이라는 의미가 성립함."""
+
         self._build_toolbar()
         self._build_central_widget()
         self._connect_signals()
@@ -115,11 +119,11 @@ class MainWindow(QMainWindow):
         style = self.style()  # QStyle.StandardPixmap 아이콘은 별도 이미지 파일 없이 사용 가능
 
         start_action = QAction(style.standardIcon(QStyle.StandardPixmap.SP_MediaPlay), "Start", self)
-        start_action.triggered.connect(self.sim_worker.start_simulation)
+        start_action.triggered.connect(self._on_start_clicked)
         toolbar.addAction(start_action)
 
         stop_action = QAction(style.standardIcon(QStyle.StandardPixmap.SP_MediaPause), "Stop", self)
-        stop_action.triggered.connect(self.sim_worker.stop_simulation)
+        stop_action.triggered.connect(self._on_stop_clicked)
         toolbar.addAction(stop_action)
 
         reset_action = QAction(style.standardIcon(QStyle.StandardPixmap.SP_BrowserReload), "Reset", self)
@@ -131,6 +135,37 @@ class MainWindow(QMainWindow):
         exit_action = QAction(style.standardIcon(QStyle.StandardPixmap.SP_TitleBarCloseButton), "Exit", self)
         exit_action.triggered.connect(self.close)
         toolbar.addAction(exit_action)
+
+    def _on_start_clicked(self) -> None:
+        """Start 버튼 클릭. Stop 연속 클릭 카운트를 리셋함 (연속성이 끊김)."""
+
+        self._stop_click_count = 0
+        self.sim_worker.start_simulation()
+
+    def _on_stop_clicked(self) -> None:
+        """Stop 버튼 클릭. ★ 이스터에그: 연속 10번 누르면 팀 소개 표시.
+
+        Start를 누르거나 창을 재시작하면 카운트가 리셋되므로 "연속"으로만 발동함.
+        """
+
+        self.sim_worker.stop_simulation()
+
+        self._stop_click_count += 1
+        if self._stop_click_count >= 10:
+            self._stop_click_count = 0
+            self._show_team_intro()
+
+    def _show_team_intro(self) -> None:
+        QMessageBox.information(
+            self,
+            "팀 소개",
+            "🤖 RoboTwin Sorter — 팀 \"304 Not Found\"\n\n"
+            "김태익 — 로봇 제어 & 시뮬레이션\n"
+            "윤주연 — 비전 (YOLO 모델)\n"
+            "진선우 — 통합 & 파이프라인\n\n"
+            "멘토: 진현철 대표 (세중아이에스)\n\n"
+            "Stop을 열 번이나 누르시다니... 그만큼 답답하셨다면 죄송합니다 🙏",
+        )
 
     def _build_central_widget(self) -> None:
         """중앙 시뮬레이션 화면 + 웹캠 화면 + 로그/상태 패널 레이아웃."""
