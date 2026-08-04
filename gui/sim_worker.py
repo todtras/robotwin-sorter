@@ -43,7 +43,6 @@ from PySide6.QtGui import QImage
 
 import config
 from integration.pipeline import Pipeline
-from robot.fsm import RobotState
 
 FRAME_WIDTH = 240
 FRAME_HEIGHT = 180
@@ -102,10 +101,23 @@ class SimWorker(QThread):
         self._latest_frame = None    # WebcamWorker가 set_latest_frame()으로 채워줌 (real 모드용)
         self.last_detections = []    # Pipeline이 계산한 최신 검출 결과. MainWindow가 웹캠 뷰에
                                       # bbox를 그릴 때 읽어감 (YOLO 재실행 없이 재사용).
-        self._motion_frame_queue: deque[QImage] = deque(maxlen=MOTION_FRAME_QUEUE_MAX)
-        """로봇팔이 이동하는 동안 on_step()이 캡처해둔 중간 프레임들.
-        step_cycle() 자체는 sleep 없이 빠르게 끝나므로, 여기 쌓인 프레임을
-        run() 루프가 MOTION_REPLAY_FPS 속도로 하나씩 꺼내 내보내면서 재생함."""
+        self._motion_frame_queue: deque[tuple[QImage, str]] = deque(maxlen=MOTION_FRAME_QUEUE_MAX)
+        """로봇팔이 이동하는 동안 on_step()이 캡처해둔 (중간 프레임, 그 순간의 FSM
+        상태) 쌍들. step_cycle() 자체는 sleep 없이 빠르게 끝나므로, 여기 쌓인 걸
+        run() 루프가 MOTION_REPLAY_FPS 속도로 하나씩 꺼내 재생함.
+        ★ 상태를 프레임이랑 같이 저장해두는 이유: FSM 상태를 캡처 즉시 emit하면
+          "지금 화면에 재생 중인(몇 초 전) 프레임"과 "지금 막 emit된(실시간) 상태"가
+          서로 다른 시점을 가리켜서 어긋나 보임. 프레임을 꺼낼 때 그때 저장해둔
+          상태를 같이 꺼내 emit해야 화면에 보이는 것과 라벨이 항상 짝이 맞음."""
+
+        self._pending_log_queue: deque[tuple[int, str]] = deque()
+        """Pipeline.log_fn(=_on_pipeline_log)으로 들어온 메시지를 곧바로 emit하지
+        않고 미뤄서 내보내기 위한 큐: (그 메시지를 내보내도 되는 누적 재생 프레임
+        번호, 메시지). 로그도 FSM 상태와 같은 이유로 어긋남 — "수거 시작" 같은
+        메시지가 실시간으로 찍히는 동안 화면은 몇 초 전 프레임을 재생 중이라,
+        메시지가 로그된 시점에 이미 큐에 쌓여있던 프레임들이 다 재생된 뒤에야
+        emit해야 화면과 시점이 맞음."""
+        self._frames_played_total = 0
 
         # Settings 다이얼로그로 조절할 값들.
         self._target_fps = TARGET_FPS
@@ -171,6 +183,19 @@ class SimWorker(QThread):
         use_dummy=True일 때는 아무도 이 값을 읽지 않으니 그냥 저장만 해둡니다.
         """
         self._latest_frame = frame
+
+    def _on_pipeline_log(self, message: str) -> None:
+        """Pipeline(log_fn)이 워커 스레드 안에서 직접 호출함(step_cycle() 호출
+        스택 안이라 self.run()과 같은 스레드 — cross-thread 아님).
+
+        바로 emit하지 않고, "이 메시지가 로그된 시점에 이미 큐에 쌓여있던
+        프레임 수만큼 재생된 뒤에" 내보내도록 예약만 해둠 — FSM 상태를 프레임과
+        같이 큐에 저장하는 것과 같은 이유(run() 하단의 큐 drain 부분 참고).
+        큐가 비어있으면(밀린 화면이 없음) target이 지금 값 그대로라 다음
+        프레임 하나 재생되자마자 바로 나감 — 사실상 즉시emit과 다름없음.
+        """
+        target = self._frames_played_total + len(self._motion_frame_queue)
+        self._pending_log_queue.append((target, message))
 
     def apply_settings(
         self,
@@ -286,6 +311,8 @@ class SimWorker(QThread):
                     self.frame_ready.emit(self._capture_frame())
                     self.last_detections = []
                     self._motion_frame_queue.clear()
+                    self._pending_log_queue.clear()
+                    self._frames_played_total = 0
 
                     self._reset_requested = False
                     self._playing = False
@@ -310,12 +337,12 @@ class SimWorker(QThread):
                 #   빠질 때까지 "그때 그 장면"이 계속 재생돼서 실시간처럼 안
                 #   느껴짐 — 대략 작업 2개 분량으로 제한.
                 def _queue_motion_frame() -> None:
-                    self._motion_frame_queue.append(self._capture_frame())
+                    # 캡처 시점의 FSM 상태를 프레임과 함께 저장 -> 나중에 이 프레임이
+                    # 실제로 화면에 나올 때 같이 꺼내 emit해야 라벨이 어긋나지 않음.
+                    state_name = self._pipeline.arm.state.name
+                    self._motion_frame_queue.append((self._capture_frame(), state_name))
 
-                def _on_robot_state_change(state: RobotState) -> None:
-                    self.robot_state_changed.emit(state.name)
-
-                completed = self._pipeline.step_cycle(frame, on_step=_queue_motion_frame, on_state_change=_on_robot_state_change)
+                completed = self._pipeline.step_cycle(frame, on_step=_queue_motion_frame)
                 self.last_detections = self._pipeline.last_detections
                 step_count += 1
                 if completed:
@@ -338,9 +365,27 @@ class SimWorker(QThread):
                 )
                 if now - last_frame_time >= replay_interval:
                     if self._motion_frame_queue:
-                        self.frame_ready.emit(self._motion_frame_queue.popleft())
+                        image, state_name = self._motion_frame_queue.popleft()
+                        self.frame_ready.emit(image)
+                        self.robot_state_changed.emit(state_name)
                     else:
+                        # 큐가 비어있으면 지연 없이 "지금" 캡처하는 거라, 지금의
+                        # 실제 상태를 같이 보여줘도 어긋나지 않음. 더미 모드는
+                        # arm에 .state 자체가 없으므로 건드리지 않음.
                         self.frame_ready.emit(self._capture_frame())
+                        if not self._use_dummy:
+                            self.robot_state_changed.emit(self._pipeline.arm.state.name)
+
+                    self._frames_played_total += 1
+                    # 방금 재생한 프레임 시점까지 도달한(=그때 밀려있던 프레임이
+                    # 다 재생된) 예약 로그들을 순서대로 내보냄.
+                    while (
+                        self._pending_log_queue
+                        and self._pending_log_queue[0][0] <= self._frames_played_total
+                    ):
+                        _, pending_message = self._pending_log_queue.popleft()
+                        self.log_message.emit(pending_message)
+
                     frames_since_fps += 1
                     last_frame_time = now
 
@@ -364,7 +409,13 @@ class SimWorker(QThread):
         """Pipeline(로봇 + 수거함 + 분류 로직)을 생성합니다. 항상 DIRECT 모드로 붙여서
         네이티브 PyBullet 창 없이 계산만 하고, 화면은 getCameraImage()로 그립니다."""
 
-        self._pipeline = Pipeline(use_dummy=self._use_dummy, use_gui=False)
+        # log_fn: Pipeline 내부의 print() 대신 이 콜백으로 로그를 내보내게 해서
+        # GUI Log 패널에 뜨게 함(터미널이 아니라). self.log_message.emit을 직접
+        # 넘기지 않고 _on_pipeline_log를 거치는 이유: 화면(지연 재생 중인 프레임
+        # 큐)과 시점을 맞추기 위해 즉시 emit 대신 큐에 예약만 해둠.
+        self._pipeline = Pipeline(
+            use_dummy=self._use_dummy, use_gui=False, log_fn=self._on_pipeline_log
+        )
         self._pipeline.start()
 
         # TrashDetector는 생성 시점에 config.CONF_THRESHOLD로 conf를 초기화하므로,
@@ -385,6 +436,7 @@ class SimWorker(QThread):
             self._pipeline = None
         self.last_detections = []
         self._motion_frame_queue.clear()
+        self._pending_log_queue.clear()
 
     def _capture_frame(self) -> QImage:
         """현재 씬을 렌더링해서 QImage로 변환합니다.

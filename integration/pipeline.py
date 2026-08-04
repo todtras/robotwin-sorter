@@ -14,7 +14,7 @@ integration/pipeline.py — Qt 대시보드용 통합 파이프라인
 from __future__ import annotations
 
 import time
-from typing import Any
+from typing import Any, Callable
 
 import pybullet as p
 
@@ -49,7 +49,14 @@ class Pipeline:
         self,
         use_dummy: bool = True,
         use_gui: bool = config.USE_GUI,
+        log_fn: Callable[[str], None] = print,
     ) -> None:
+        # Pipeline은 PySide6를 몰라야 하므로(CLI/테스트 단독 실행), 로그를 직접
+        # print()하는 대신 이 콜백을 통해서만 내보냄. GUI에서는
+        # SimWorker가 log_fn=self.log_message.emit을 넘겨서 로그 패널로 연결하고,
+        # CLI에서는 기본값(print)이 그대로 콘솔에 찍힘.
+        self._log = log_fn
+
         # -----------------------------------------------------
         # PyBullet 씬
         # -----------------------------------------------------
@@ -213,7 +220,7 @@ class Pipeline:
             t_detect_ms
         )
 
-        print(
+        self._log(
             "[pipeline] 배치 수집 시작: "
             f"현재 {len(detections)}개, "
             f"{BATCH_COLLECTION_SEC:.1f}초 동안 "
@@ -253,7 +260,7 @@ class Pipeline:
                     t_detect_ms
                 )
 
-                print(
+                self._log(
                     "[pipeline] 배치 물체 추가 감지: "
                     f"{current_count}개"
                 )
@@ -290,7 +297,7 @@ class Pipeline:
             self._state = self.STATE_WAITING
             return None
 
-        print(
+        self._log(
             "[pipeline] 배치 확정: "
             f"{len(confirmed)}개"
         )
@@ -382,7 +389,7 @@ class Pipeline:
 
         self._state = self.STATE_WAITING
 
-        print(
+        self._log(
             "[pipeline] 작업영역 비움 확인 "
             "— 다음 배치를 기다립니다"
         )
@@ -433,7 +440,7 @@ class Pipeline:
                     "out_of_workspace",
                 )
 
-                print(
+                self._log(
                     f"  제외: {det.category} "
                     f"({wx:.3f}, {wy:.3f}) "
                     "- 작업영역 밖"
@@ -442,7 +449,7 @@ class Pipeline:
                 continue
 
             if self.is_duplicate(wx, wy):
-                print(
+                self._log(
                     f"  제외: {det.category} "
                     f"({wx:.3f}, {wy:.3f}) "
                     "- 중복 좌표"
@@ -473,7 +480,7 @@ class Pipeline:
                     }
                 )
 
-                print(
+                self._log(
                     f"  스폰 완료: "
                     f"{det.category} "
                     f"({wx:.3f}, {wy:.3f}) "
@@ -489,13 +496,13 @@ class Pipeline:
                         (wx, wy)
                     )
 
-                print(
+                self._log(
                     f"  스폰 실패: "
                     f"{det.category} - {error}"
                 )
 
         if batch_items:
-            print(
+            self._log(
                 "[pipeline] 전체 스폰 완료: "
                 f"{len(batch_items)}개"
             )
@@ -549,7 +556,7 @@ class Pipeline:
                 )
 
             except Exception as error:
-                print(
+                self._log(
                     "[pipeline] 객체 제거 오류: "
                     f"body_id={task.body_id}, "
                     f"{error}"
@@ -586,7 +593,7 @@ class Pipeline:
                 wx = item["wx"]
                 wy = item["wy"]
 
-                print(
+                self._log(
                     f"  수거 시작: "
                     f"{det.category} "
                     f"({wx:.3f}, {wy:.3f})"
@@ -647,14 +654,15 @@ class Pipeline:
 
                     completed += 1
 
-                    print(
+                    result_text = "OK" if ok else f"FAIL ({fail_reason})"
+                    self._log(
                         f"  {det.category} "
                         f"-> {task.target_bin} | "
-                        f"{'OK' if ok else 'FAIL'}"
+                        f"{result_text}"
                     )
 
                 except Exception as error:
-                    print(
+                    self._log(
                         f"  처리 오류: "
                         f"{det.category} - {error}"
                     )
@@ -793,7 +801,7 @@ class Pipeline:
 
             self._empty_detection_count = 0
 
-            print(
+            self._log(
                 "[pipeline] 배치 수거 완료 "
                 "— 실제 물체를 작업영역에서 "
                 "치워주세요"
