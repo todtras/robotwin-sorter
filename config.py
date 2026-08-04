@@ -42,6 +42,8 @@ DATASET_DIR = PROJECT_ROOT / "dataset"
 LOG_DIR = PROJECT_ROOT / "data" / "logs"
 """실험 CSV 저장 위치. 보고서의 모든 숫자가 여기서 나옵니다."""
 
+SCREENSHOT_DIR = PROJECT_ROOT / "data" / "screenshots"
+
 DOCS_DIR = PROJECT_ROOT / "docs"
 
 
