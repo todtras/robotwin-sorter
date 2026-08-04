@@ -27,7 +27,7 @@ class TrashDetector:
     def detect(self, frame) -> list[Detection]:
         """BGR 프레임 -> Detection 리스트. 검출 없으면 빈 리스트."""
         results = self.model(frame, imgsz=config.INFERENCE_IMGSZ,
-                              conf=self.conf, verbose=False)
+                              conf=self.conf, iou=0.5, agnostic_nms=True, verbose=False)
 
         detections: list[Detection] = []
         for box in results[0].boxes:
