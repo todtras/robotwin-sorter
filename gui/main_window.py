@@ -163,7 +163,7 @@ class MainWindow(QMainWindow):
             "김태익 — 로봇 제어 & 시뮬레이션\n"
             "윤주연 — 비전 (YOLO 모델)\n"
             "진선우 — 통합 & 파이프라인\n\n"
-            "멘토: 진현철 대표 (세중아이에스)\n\n"
+            "멘토: 진현철 대표님 (세중아이에스)\n\n"
             "Stop을 열 번이나 누르시다니... 그만큼 답답하셨다면 죄송합니다 🙏",
         )
 
@@ -176,6 +176,10 @@ class MainWindow(QMainWindow):
         self.sim_view = AspectRatioLabel(
             "Waiting for simulation...", transformation_mode=Qt.TransformationMode.SmoothTransformation
         )
+        self.fsm_label = QLabel("FSM: N/A", parent=self.sim_view)
+        self.fsm_label.setStyleSheet("background-color: rgba(0, 0, 0, 128); color: white; padding: 2px;")
+        self.fsm_label.move(10, 10)  # sim_view 오른쪽 위에 FSM 상태 표시
+
         self.webcam_view = AspectRatioLabel("Waiting for camera...")
         self.log_panel = LogPanel()
         self.status_panel = StatusPanel()
@@ -264,6 +268,7 @@ class MainWindow(QMainWindow):
         self.sim_worker.frame_ready.connect(self._on_sim_frame)
         self.sim_worker.state_changed.connect(self.status_panel.update_state)
         self.sim_worker.log_message.connect(self.log_panel.append_log)
+        self.sim_worker.robot_state_changed.connect(self.fsm_label.setText)
         self.webcam_worker.frame_ready.connect(self._on_webcam_frame)
         self.webcam_worker.log_message.connect(self.log_panel.append_log)
         self.settings_panel.target_fps.target_fps_changed.connect(self._on_target_fps_changed)
