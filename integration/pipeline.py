@@ -693,6 +693,7 @@ class Pipeline:
 
         if not self._running:
             p.stepSimulation()
+            time.sleep(config.SIM_TIMESTEP)
             return 0
 
         # 실제 모드인데 프레임이 없으면 검출하지 않음
@@ -724,6 +725,7 @@ class Pipeline:
             )
 
             p.stepSimulation()
+            time.sleep(config.SIM_TIMESTEP)
             return 0
 
         # -----------------------------------------------------
@@ -737,6 +739,7 @@ class Pipeline:
                 )
 
             p.stepSimulation()
+            time.sleep(config.SIM_TIMESTEP)
             return 0
 
         # -----------------------------------------------------
@@ -754,6 +757,7 @@ class Pipeline:
 
             if confirmed is None:
                 p.stepSimulation()
+                time.sleep(config.SIM_TIMESTEP)
                 return 0
 
             (
@@ -769,6 +773,7 @@ class Pipeline:
                 self._state = self.STATE_WAITING
 
                 p.stepSimulation()
+                time.sleep(config.SIM_TIMESTEP)
                 return 0
 
             completed = self._execute_batch(
@@ -803,6 +808,7 @@ class Pipeline:
         self._state = self.STATE_WAITING
 
         p.stepSimulation()
+        time.sleep(config.SIM_TIMESTEP)
         return 0
 
     # =========================================================
