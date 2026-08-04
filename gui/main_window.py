@@ -1,14 +1,6 @@
 """
 gui/main_window.py — Robot Dashboard 메인 윈도우
 
-Qt 기초:
-- QMainWindow: 메뉴바/툴바/상태바가 딸린 기본 창 틀. `self.menuBar()`로 메뉴바를
-  얻고, `self.setCentralWidget(widget)`으로 가운데 영역을 채웁니다.
-- QAction: 메뉴 항목 하나를 나타내는 객체. `action.triggered.connect(함수)`로
-  클릭됐을 때 실행될 함수(슬롯)를 연결합니다.
-- Signal ↔ Slot 연결: `어떤_시그널.connect(받을_함수)` 형태로 한 번만 등록해두면,
-  이후 그 시그널이 emit()될 때마다 자동으로 받을_함수가 호출됩니다.
-
 ★ 이 클래스는 pybullet/cv2를 직접 호출하면 안 됩니다. 모든 작업은 SimWorker /
   WebcamWorker에게 메서드 호출로 명령하고, 결과(frame/state/log)는 시그널로 받아서
   화면에 그리기만 합니다.
@@ -20,6 +12,7 @@ Start / Stop / Reset은 시뮬레이션에만 적용됩니다 (웹캠은 창이 
 """
 
 from __future__ import annotations
+from datetime import datetime
 
 from PySide6.QtCore import QSettings
 from PySide6.QtGui import QAction, QColor, QImage, QPainter, QPen, QPixmap, Qt
@@ -73,6 +66,9 @@ class AspectRatioLabel(QLabel):
         self._rescale()
         super().resizeEvent(event)
 
+    def get_original_pixmap(self) -> QPixmap | None:
+        return self._original_pixmap
+
     def _rescale(self) -> None:
         if self._original_pixmap is not None:
             super().setPixmap(self._original_pixmap.scaled(
@@ -93,15 +89,14 @@ class MainWindow(QMainWindow):
         self._settings = QSettings("RobotwinSorter", "RobotDashboard")
 
         # use_dummy=True: DummyDetector/DummyArmController로 안전하게 시작.
-        # 실제 YOLO+로봇을 붙이려면 False로 바꾸세요 (모델/캘리브레이션 준비 필요).
         self.sim_worker = SimWorker(use_dummy=False)
         self.webcam_worker = WebcamWorker()
 
         self._stop_click_count = 0  # ★ 이스터에그: Stop 연속 10번 누르면 팀 소개 표시
-        """Start를 누르면 0으로 리셋됨 -> "연속"이라는 의미가 성립함."""
 
-        self._build_toolbar()
+        
         self._build_central_widget()
+        self._build_toolbar()
         self._connect_signals()
         self._restore_layout()
 
@@ -130,6 +125,10 @@ class MainWindow(QMainWindow):
         reset_action.triggered.connect(self.sim_worker.reset_simulation)
         toolbar.addAction(reset_action)
 
+        screenshot_action = QAction(style.standardIcon(QStyle.StandardPixmap.SP_DialogSaveButton), "Screenshot", self)
+        screenshot_action.triggered.connect(lambda: self._on_screenshot_clicked(prefix="manual"))
+        toolbar.addAction(screenshot_action)
+
         toolbar.addSeparator()
 
         exit_action = QAction(style.standardIcon(QStyle.StandardPixmap.SP_TitleBarCloseButton), "Exit", self)
@@ -155,6 +154,21 @@ class MainWindow(QMainWindow):
             self._stop_click_count = 0
             self._show_team_intro()
 
+    def _on_screenshot_clicked(self, prefix : str|None = None) -> None:
+        """Screenshot 버튼 클릭. 시뮬레이션 화면을 PNG로 저장."""
+
+        pixmap = self.grab()
+
+        config.SCREENSHOT_DIR.mkdir(parents=True, exist_ok=True)
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        path = config.SCREENSHOT_DIR / f"{prefix}_{timestamp}.png"
+        
+        if pixmap.save(str(path), "PNG"):
+            self.log_panel.append_log(f"화면을 {path}로 저장했습니다.")
+        else:
+            self.log_panel.append_log("스크린샷 저장 실패")
+
+
     def _show_team_intro(self) -> None:
         QMessageBox.information(
             self,
@@ -178,7 +192,7 @@ class MainWindow(QMainWindow):
         )
         self.fsm_label = QLabel("FSM: N/A", parent=self.sim_view)
         self.fsm_label.setStyleSheet("background-color: rgba(0, 0, 0, 128); color: white; padding: 2px;")
-        self.fsm_label.move(10, 10)  # sim_view 오른쪽 위에 FSM 상태 표시
+        self.fsm_label.move(10, 10)  # sim_view 왼쪽 위에 FSM 상태 표시
 
         self.webcam_view = AspectRatioLabel("Waiting for camera...")
         self.log_panel = LogPanel()
