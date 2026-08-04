@@ -193,6 +193,14 @@ class SimWorker(QThread):
         같이 큐에 저장하는 것과 같은 이유(run() 하단의 큐 drain 부분 참고).
         큐가 비어있으면(밀린 화면이 없음) target이 지금 값 그대로라 다음
         프레임 하나 재생되자마자 바로 나감 — 사실상 즉시emit과 다름없음.
+
+        TODO(8/4): _execute_batch()가 move_to() 타임아웃으로 오래 블로킹되면
+          그동안 step_cycle()이 안 끝나서 프레임 drain 자체가 멈추고, 그 사이
+          쌓인 로그가 전부 지연된 채로 대기하다가 풀리는 순간 한꺼번에
+          쏟아지는 문제 발견("와르르" 버그). 실패 진단 시 실시간 피드백이
+          사라지는 게 더 치명적이라, 로그는 이 지연 로직 없이 즉시
+          self.log_message.emit(message)로 되돌리는 걸 검토 (FSM 라벨
+          페어링은 유지 — 그쪽은 상태가 안 바뀌는 구간이라 문제 덜함).
         """
         target = self._frames_played_total + len(self._motion_frame_queue)
         self._pending_log_queue.append((target, message))
