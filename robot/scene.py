@@ -76,7 +76,9 @@ class Scene:
             vis = p.createVisualShape(p.GEOM_BOX,
                                       halfExtents=config.BIN_HALF_EXTENTS,
                                       rgbaColor=config.BIN_COLORS[name])
+            col = p.createCollisionShape(p.GEOM_BOX, halfExtents=config.BIN_HALF_EXTENTS)
             body = p.createMultiBody(baseMass=0,                              # 0 = 고정체
+                                     baseCollisionShapeIndex=col,              # ★ 없으면 물체가 통을 뚫고 떨어짐
                                      baseVisualShapeIndex=vis,
                                      basePosition=pos)
             self.bin_ids[name] = body

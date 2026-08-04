@@ -40,7 +40,12 @@ class SortLogger:
           writer = csv.writer(f)
           writer.writerow(config.CSV_COLUMNS)
 
-        
+        # summary()가 매번 CSV 전체를 다시 읽지 않도록 메모리에 누적 집계.
+        # GUI에서 분류 완료마다(+초당 fps 틱마다) summary()를 호출하는데,
+        # 파일을 통째로 재파싱하면 세션이 길어질수록 점점 느려짐.
+        self._total = 0
+        self._success = 0
+        self._fail_reasons: dict[str, int] = {}
 
     def record(self, result: SortResult) -> None:
         """한 사이클 결과를 기록.
@@ -71,6 +76,13 @@ class SortLogger:
           writer = csv.writer(f)
           writer.writerow(row)
 
+        self._total += 1
+        if result.success:
+            self._success += 1
+        else:
+            reason = result.fail_reason or ""
+            self._fail_reasons[reason] = self._fail_reasons.get(reason, 0) + 1
+
     def record_failure(self, detection: Detection, reason: FailReason) -> None:
         """로봇까지 못 간 실패(작업영역 밖 등)를 기록.
 
@@ -92,25 +104,18 @@ class SortLogger:
           writer = csv.writer(f)
           writer.writerow(row)
 
+        self._total += 1
+        self._fail_reasons[reason] = self._fail_reasons.get(reason, 0) + 1
+
     def summary(self) -> dict:
-        """성공률과 실패 사유별 개수를 집계. 발표 슬라이드에 바로 씁니다."""
-        total = 0
-        success_count = 0
-        fail_reasons: dict[str, int] = {}
+        """성공률과 실패 사유별 개수를 집계. 발표 슬라이드에 바로 씁니다.
 
-        with open(self.path, "r", encoding="utf-8") as f:
-          reader = csv.DictReader(f)
-          for row in reader:
-            total += 1
-            if row["success"] == "True":
-              success_count += 1
-            else:
-              reason = row["fail_reason"]
-              fail_reasons[reason] = fail_reasons.get(reason, 0) + 1
-
+        record()/record_failure() 호출 시 누적해둔 메모리 값을 그대로 반환합니다
+        (CSV 파일을 다시 열어서 파싱하지 않음 — 이 프로세스가 유일한 기록자라
+        파일과 항상 일치함)."""
         return {
-          "total": total,
-          "success": success_count,
-          "success_rate": success_count / total if total > 0 else 0.0,
-          "fail_reasons": fail_reasons,
+          "total": self._total,
+          "success": self._success,
+          "success_rate": self._success / self._total if self._total > 0 else 0.0,
+          "fail_reasons": dict(self._fail_reasons),
         }
