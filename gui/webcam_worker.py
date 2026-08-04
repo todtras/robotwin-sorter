@@ -5,13 +5,15 @@ sim_worker.py와 완전히 같은 QThread 패턴을 따릅니다 (start_capture�
 stop_capture로 멈춤, run() 안에서 cv2로 프레임을 읽어 시그널로 GUI에 전달).
 헷갈리면 sim_worker.py의 start_simulation()/run() 주석을 먼저 참고하세요.
 
-★ vision/camera.py의 Camera는 아직 구현 전(raise NotImplementedError 상태)이라,
-  팀원 모듈에 의존하지 않기 위해 여기서는 cv2.VideoCapture를 직접 다룹니다.
-  Camera가 나중에 완성되면 이 파일의 run()만 그쪽 호출로 바꿔 끼우면 됩니다.
-
-시뮬레이션 워커와는 완전히 독립적으로 동작해야 합니다. 대시보드가 열려있는 동안은
+시뮬레이션 워커와는 완전히 독립적으로 동작합니다. 대시보드가 열려있는 동안은
 계속 촬영하는 게 자연스러우니(시뮬레이션 Start/Stop과 무관), MainWindow가 생성될 때
-바로 start_capture()를 호출하도록 설계하세요.
+바로 start_capture()를 호출합니다.
+
+★ SimWorker(use_dummy=False)가 실제 검출을 하려면 이 웹캠 프레임이 필요합니다.
+  같은 장치를 두 번 열면(cv2.VideoCapture 중복 open) 충돌하므로, 웹캠은 이 클래스가
+  유일하게 열고, raw_frame_ready로 원본 BGR numpy 프레임을 MainWindow를 거쳐
+  SimWorker.set_latest_frame()에 직접 넘겨줍니다 (화면 표시용 frame_ready(QImage)와는
+  별개 시그널).
 """
 
 from __future__ import annotations
@@ -27,11 +29,13 @@ class WebcamWorker(QThread):
     """웹캠 프레임을 읽어 GUI로 전달하는 워커 스레드.
 
     Signals:
-        frame_ready(QImage): 촬영된 프레임.
+        frame_ready(QImage): 화면 표시용으로 변환된 프레임.
+        raw_frame_ready(object): 원본 BGR numpy 프레임. SimWorker의 실제 검출용.
         log_message(str): 카메라 연결 실패 등 알림.
     """
 
     frame_ready = Signal(QImage)
+    raw_frame_ready = Signal(object)
     log_message = Signal(str)
 
     def __init__(self, camera_index: int = config.CAMERA_INDEX) -> None:
@@ -85,6 +89,7 @@ class WebcamWorker(QThread):
                     frame_bgr.data, width, height, 3 * width, QImage.Format.Format_BGR888
                 ).copy()  # ★ 스레드 경계 넘기기 전 복제 필수 (sim_worker와 동일 이유)
                 self.frame_ready.emit(image)
+                self.raw_frame_ready.emit(frame_bgr.copy())
 
                 # cap.read()가 카메라 자체 fps(config.CAMERA_FPS)만큼 이미 블로킹하므로
                 # 여기서 추가로 msleep을 하면 체감 fps가 그만큼 더 줄어듦 -> 제거.

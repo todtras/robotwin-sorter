@@ -20,11 +20,14 @@ class DummyArmController:
         self.success_rate = success_rate
         self.delay_sec = delay_sec
 
-    def execute_task(self, task: SortTask) -> bool:
+    def execute_task(self, task: SortTask, on_step=None) -> bool:
         """항상(또는 success_rate 확률로) 성공. 실제 동작 시간을 흉내냅니다.
 
         success_rate를 0.7로 낮추면 실패 경로의 로깅이 잘 도는지
         확인할 수 있습니다.
+
+        on_step: ArmController와 인터페이스를 맞추기 위한 파라미터. 더미는
+        실제 스텝 진행이 없어 호출할 게 없으므로 무시합니다.
         """
         time.sleep(self.delay_sec)
         return random.random() < self.success_rate

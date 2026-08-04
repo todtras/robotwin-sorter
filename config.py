@@ -53,7 +53,7 @@ DOCS_DIR = PROJECT_ROOT / "docs"
 #   해상도가 다르면 인식률이 눈에 띄게 떨어집니다.
 #   그래서 두 파일 모두 이 상수를 import해서 씁니다.
 
-CAMERA_INDEX = 1
+CAMERA_INDEX = 0
 """cv2.VideoCapture()에 넘길 장치 번호.
 노트북 내장 캠이 0, USB 웹캠을 꽂으면 1인 경우가 많습니다.
 안 잡히면 0, 1, 2를 차례로 시도해 보고 각자 환경에 맞게 조정하세요."""
@@ -71,7 +71,7 @@ CAMERA_FPS = 30
 # 2. 모델 / 추론 설정
 # ===========================================================================
 
-CONF_THRESHOLD = 0.4
+CONF_THRESHOLD = 0.7
 """검출 신뢰도 임계값. 이 값 미만은 버립니다.
 
 - 너무 낮으면(0.25): 빈 책상에서도 헛것을 봅니다 (false positive)
@@ -80,12 +80,12 @@ CONF_THRESHOLD = 0.4
 - 조정 근거는 runs/train/PR_curve.png를 보고 정하면 보고서에 쓸 수 있습니다.
 """
 
-INFERENCE_IMGSZ = 320
+INFERENCE_IMGSZ = 640
 """추론 입력 크기. 학습 때의 imgsz와 같은 값을 쓰세요.
 640 대비 약 2배 빠릅니다. 탑다운 뷰라 물체가 크게 찍혀 320으로 충분합니다.
 실험 3에서 320 vs 640 트레이드오프를 비교합니다."""
 
-DETECT_EVERY_N_FRAMES = 1
+DETECT_EVERY_N_FRAMES = 3
 """N프레임마다 1회만 추론. FPS가 부족하면 3 정도로 올리고
 사이 프레임은 이전 결과를 유지하세요."""
 
@@ -315,10 +315,10 @@ JOINT_FORCE가 세서 실제 240Hz(=1.0)로는 순식간에 목표에 수렴해�
 물리적으로 정확한 실시간, 실험 자동화(Day 7)처럼 빨리 돌리고 싶으면
 0에 가깝게 낮추세요."""
 
-SIM_CAMERA_DISTANCE = 2
+SIM_CAMERA_DISTANCE = 3
 """GUI 시작 시 카메라-타겟 거리(미터). 작을수록 확대(줌인)."""
 
-SIM_CAMERA_YAW = 175
+SIM_CAMERA_YAW = 165
 """GUI 시작 시 카메라 좌우 회전각(도). 로봇을 정면 아닌 대각선에서 보게 함."""
 
 SIM_CAMERA_PITCH = -30
