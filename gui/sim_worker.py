@@ -90,7 +90,7 @@ class SimWorker(QThread):
     frame_ready = Signal(QImage)
     state_changed = Signal(dict)
     log_message = Signal(str)
-    robot_state_changed = Signal(RobotState)
+    robot_state_changed = Signal(str)
 
     def __init__(self, use_dummy: bool = True) -> None:
         super().__init__()
@@ -312,8 +312,8 @@ class SimWorker(QThread):
                 def _queue_motion_frame() -> None:
                     self._motion_frame_queue.append(self._capture_frame())
 
-                def _on_robot_state_change(state : RobotState) -> None:
-                    self.robot_state_changed.emit(state)
+                def _on_robot_state_change(state: RobotState) -> None:
+                    self.robot_state_changed.emit(state.name)
 
                 completed = self._pipeline.step_cycle(frame, on_step=_queue_motion_frame, on_state_change=_on_robot_state_change)
                 self.last_detections = self._pipeline.last_detections
