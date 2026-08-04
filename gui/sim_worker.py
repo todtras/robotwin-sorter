@@ -43,6 +43,7 @@ from PySide6.QtGui import QImage
 
 import config
 from integration.pipeline import Pipeline
+from robot.fsm import RobotState
 
 FRAME_WIDTH = 240
 FRAME_HEIGHT = 180
@@ -89,6 +90,7 @@ class SimWorker(QThread):
     frame_ready = Signal(QImage)
     state_changed = Signal(dict)
     log_message = Signal(str)
+    robot_state_changed = Signal(RobotState)
 
     def __init__(self, use_dummy: bool = True) -> None:
         super().__init__()
@@ -310,7 +312,10 @@ class SimWorker(QThread):
                 def _queue_motion_frame() -> None:
                     self._motion_frame_queue.append(self._capture_frame())
 
-                completed = self._pipeline.step_cycle(frame, on_step=_queue_motion_frame)
+                def _on_robot_state_change(state : RobotState) -> None:
+                    self.robot_state_changed.emit(state)
+
+                completed = self._pipeline.step_cycle(frame, on_step=_queue_motion_frame, on_state_change=_on_robot_state_change)
                 self.last_detections = self._pipeline.last_detections
                 step_count += 1
                 if completed:

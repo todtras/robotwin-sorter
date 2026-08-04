@@ -124,7 +124,7 @@ class Pipeline:
                 return True
         return False
 
-    def step_cycle(self, frame=None, on_step=None) -> int:
+    def step_cycle(self, frame=None, on_step=None, on_state_change=None) -> int:
         """검출 -> 처리 한 사이클. CLI(run())와 GUI(SimWorker.run()) 양쪽이
         이 메서드를 반복 호출합니다.
 
@@ -194,7 +194,7 @@ class Pipeline:
                 task = self.spawner.spawn(det, (wx, wy))
 
                 t2 = time.time()
-                ok = self.arm.execute_task(task, on_step=on_step)
+                ok = self.arm.execute_task(task, on_step=on_step, on_state_change=on_state_change)
                 t_execute = (time.time() - t2) * 1000
 
                 if ok:

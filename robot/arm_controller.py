@@ -183,7 +183,7 @@ class ArmController:
 
         return self.move_to(config.HOME_POSITION, timeout=config.MOVE_TIMEOUT_SEC, on_step=on_step)
 
-    def execute_task(self, task: SortTask, on_step=None) -> bool:
+    def execute_task(self, task: SortTask, on_step=None, on_state_change=None) -> bool:
         """FSM을 한 바퀴 돌려 분류를 완수합니다.
 
           IDLE -> APPROACH -> DESCEND -> GRASP -> LIFT
@@ -199,6 +199,8 @@ class ArmController:
         start_time = time.time()
 
         while True:
+            if (on_state_change is not None):
+                on_state_change(self.state)
             match self.state:
                 case RobotState.APPROACH:
                     if self.move_to((x, y, z + config.APPROACH_HEIGHT), timeout=config.MOVE_TIMEOUT_SEC, on_step=on_step):
