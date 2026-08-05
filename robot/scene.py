@@ -42,7 +42,26 @@ class Scene:
 
         p.setGravity(0, 0, -9.81)  # 중력 설정
 
-        self.plane_id = p.loadURDF("plane.urdf")
+        # plane.urdf 대신 단순 박스 바닥. plane.urdf는 100x100m 체커무늬 텍스처
+        # 쿼드라 TinyRenderer(소프트웨어 래스터라이저)에서 매 프레임 화면을 거의
+        # 다 채우며 그려지는 게 렌더 비용의 대부분(실측 320x240에서 27.7ms 중
+        # ~27ms)을 차지함 — 로봇팔이 이동하는 동안 on_step()마다 이 비용을
+        # 반복해서 치르는 게 배치 처리 중 화면이 멈춰 보이는 주된 원인이었음
+        # (2026-08-05). 작업영역(WORKSPACE_X/Y, 최대 0.65m)과 수거함
+        # (BIN_POSITIONS, 최대 0.6m)을 넉넉히 덮는 4x4m 박스로 교체 — halfExtents
+        # z를 아주 얇게 잡고 중심을 -half만큼 내려서 윗면이 정확히 z=0에 오게
+        # 함(spawner.py가 물체를 z=OBJECT_HALF_EXTENT에 스폰하는 전제와 동일).
+        floor_half_extents = [2.0, 2.0, 0.01]
+        floor_vis = p.createVisualShape(
+            p.GEOM_BOX, halfExtents=floor_half_extents, rgbaColor=[0.7, 0.7, 0.7, 1.0]
+        )
+        floor_col = p.createCollisionShape(p.GEOM_BOX, halfExtents=floor_half_extents)
+        self.plane_id = p.createMultiBody(
+            baseMass=0,  # 0 = 고정체
+            baseCollisionShapeIndex=floor_col,
+            baseVisualShapeIndex=floor_vis,
+            basePosition=[0, 0, -floor_half_extents[2]],
+        )
         self.robot_id = p.loadURDF(
             config.ROBOT_URDF,                          # config.py에 정의된 모델 사용    
             useFixedBase=True)                          # Base 고정 안 하면 팔이 중력에 쓰러짐

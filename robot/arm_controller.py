@@ -15,18 +15,19 @@ import config
 from common.schema import FailReason, SortResult, SortTask
 from robot.fsm import RobotState
 
-STREAM_EVERY_N_STEPS = 2
+STREAM_EVERY_N_STEPS = 1
 """move_to() 이동 중 on_step 콜백을 몇 스텝마다 부를지.
-★ 이 콜백 안에서 sleep을 걸어 실시간 페이싱을 했었는데, move_to()가
-  SimWorker의 작업 스레드 안에서 그대로 blocking되는 바람에 FPS 계산/상태
-  갱신/Stop 버튼 반응까지 그 스레드 전체가 멎어버리는 문제가 있었음. 그래서
-  여기선 절대 sleep하지 않고, 물리는 원래 속도(사실상 즉시)로 계산만 하고
-  프레임 캡처 타이밍(=몇 스텝마다 콜백을 부를지)만 잘게 쪼갬. "느리게 보이게"
-  하는 건 SimWorker 쪽에서 이 콜백이 만든 프레임들을 큐에 쌓아뒀다가 논블로킹
-  으로 천천히 흘려보내는 방식으로 처리함 (gui/sim_worker.py 참고).
-★ gui/sim_worker.py의 MOTION_REPLAY_FPS와 2배씩 같이 조절할 것 — 캡처 밀도와
-  재생 속도를 같은 비율로 올리면 재생 "시간"은 그대로 유지한 채 프레임 밀도만
-  올라가서 더 매끄럽게 보임 (재생 속도만 올리면 그냥 더 빨리 끝나 보일 뿐)."""
+★ (2026-08-05) gui/sim_worker.py가 이 콜백 안에서 직접 캡처+emit+페이싱
+  sleep을 하는 방식으로 바뀜(배치 처리 중 화면이 아예 안 갱신되는 문제
+  해결). 예전엔 정반대로 "여기선 절대 sleep하지 않는다"는 원칙이었는데,
+  그 원칙을 깬 트레이드오프를 감수하고 실시간성을 택함 — Stop/Reset 반응,
+  Status 패널 FPS 갱신이 배치 처리 중엔 멎는 대가로 화면이 실시간으로 갱신됨.
+★ 한때 1로 낮춰봤음(캡처 밀도 2배 -> 짧은 이동의 프레임 수 부족을 메우려는
+  시도). 그런데 캡처 하나가 페이싱 예산(gui/sim_worker.py MOTION_REPLAY_FPS
+  기준 25ms)에 근접한 상태(320x240에서 ~15ms, 변동폭 ±10~15ms)라, 캡처를 2배
+  더 자주 하면 그만큼 "느린 캡처 한 번 걸릴" 확률도 2배로 늘어나서 오히려
+  더 자주 끊겨 보임 — 실측/체감으로 2가 1보다 나음. 프레임 밀도보다 캡처
+  자체의 비용/변동폭을 줄이는 쪽(바닥판 크기 등)이 우선순위가 높음."""
 
 
 class ArmController:

@@ -42,6 +42,8 @@ DATASET_DIR = PROJECT_ROOT / "dataset"
 LOG_DIR = PROJECT_ROOT / "data" / "logs"
 """실험 CSV 저장 위치. 보고서의 모든 숫자가 여기서 나옵니다."""
 
+SCREENSHOT_DIR = PROJECT_ROOT / "data" / "screenshots"
+
 DOCS_DIR = PROJECT_ROOT / "docs"
 
 
@@ -85,7 +87,7 @@ INFERENCE_IMGSZ = 640
 640 대비 약 2배 빠릅니다. 탑다운 뷰라 물체가 크게 찍혀 320으로 충분합니다.
 실험 3에서 320 vs 640 트레이드오프를 비교합니다."""
 
-DETECT_EVERY_N_FRAMES = 3
+DETECT_EVERY_N_FRAMES = 20
 """N프레임마다 1회만 추론. FPS가 부족하면 3 정도로 올리고
 사이 프레임은 이전 결과를 유지하세요."""
 
@@ -293,7 +295,8 @@ stepSimulation()만 더 돌려서 속도를 죽인 뒤 놓아야 물체가 안 �
 
 MOVE_TIMEOUT_SEC = 5.0
 """이동 타임아웃(초). 초과하면 False 반환 후 ERROR 상태로 전이.
-★ 무한 대기는 절대 금지. 데모 중 프로그램이 멈춰버립니다."""
+★ 무한 대기는 절대 금지. 데모 중 프로그램이 멈춰버립니다.
+"""
 
 SIM_TIMESTEP = 1.0 / 240.0
 """PyBullet 기본 시뮬레이션 스텝(초).
@@ -315,8 +318,11 @@ JOINT_FORCE가 세서 실제 240Hz(=1.0)로는 순식간에 목표에 수렴해�
 물리적으로 정확한 실시간, 실험 자동화(Day 7)처럼 빨리 돌리고 싶으면
 0에 가깝게 낮추세요."""
 
-SIM_CAMERA_DISTANCE = 3
-"""GUI 시작 시 카메라-타겟 거리(미터). 작을수록 확대(줌인)."""
+SIM_CAMERA_DISTANCE = 2.5
+"""GUI 시작 시 카메라-타겟 거리(미터). 작을수록 확대(줌인).
+★ TinyRenderer(소프트웨어 래스터라이저)는 화면에 차지하는 픽셀 수만큼
+  렌더 비용이 드니, 줌인할수록(값이 작을수록) 로봇팔이 화면을 더 채워서
+  캡처가 느려짐 — 화질/구도뿐 아니라 성능에도 영향을 주는 값(2026-08-05)."""
 
 SIM_CAMERA_YAW = 165
 """GUI 시작 시 카메라 좌우 회전각(도). 로봇을 정면 아닌 대각선에서 보게 함."""
