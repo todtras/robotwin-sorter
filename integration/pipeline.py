@@ -122,6 +122,11 @@ class Pipeline:
 
         self._empty_detection_count = 0
 
+        # GUI 옵션바에서 실시간 조절 가능 (SimWorker.apply_settings 참고).
+        # 기본값은 모듈 상수(BATCH_COLLECTION_SEC/REQUIRED_EMPTY_DETECTIONS)로 시작.
+        self.batch_collection_sec = BATCH_COLLECTION_SEC
+        self.required_empty_detections = REQUIRED_EMPTY_DETECTIONS
+
     # =========================================================
     # 실행 제어
     # =========================================================
@@ -223,7 +228,7 @@ class Pipeline:
         self._log(
             "[pipeline] 배치 수집 시작: "
             f"현재 {len(detections)}개, "
-            f"{BATCH_COLLECTION_SEC:.1f}초 동안 "
+            f"{self.batch_collection_sec:.1f}초 동안 "
             "물체를 놓아주세요"
         )
 
@@ -280,7 +285,7 @@ class Pipeline:
             - self._collection_started_at
         )
 
-        if elapsed < BATCH_COLLECTION_SEC:
+        if elapsed < self.batch_collection_sec:
             return None
 
         confirmed = list(
@@ -399,7 +404,7 @@ class Pipeline:
 
         if (
             self._empty_detection_count
-            < REQUIRED_EMPTY_DETECTIONS
+            < self.required_empty_detections
         ):
             return
 

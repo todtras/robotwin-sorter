@@ -30,6 +30,8 @@ import config
 from gui.sim_worker import FRAME_HEIGHT as _DEFAULT_FRAME_HEIGHT
 from gui.sim_worker import FRAME_WIDTH as _DEFAULT_FRAME_WIDTH
 from gui.sim_worker import TARGET_FPS as _DEFAULT_TARGET_FPS
+from integration.pipeline import BATCH_COLLECTION_SEC as _DEFAULT_BATCH_COLLECTION_SEC
+from integration.pipeline import REQUIRED_EMPTY_DETECTIONS as _DEFAULT_REQUIRED_EMPTY_DETECTIONS
 
 MAX_LOG_LINES = 1000
 
@@ -110,6 +112,8 @@ class RenderQualityPanel(QGroupBox):
         ("160x120", 160, 120),
         ("240x180", 240, 180),
         ("320x240", 320, 240),
+        ("480x360", 480, 360),
+        ("640x480", 640, 480),
     ]
     """★ "(Fast)"/"(Balanced)"/"(Best quality)" 설명을 뺌 — 콤보박스 자체 너비가
     가장 긴 항목 기준으로 정해지는데, 이 문구들 때문에 옵션바 전체가 필요
@@ -324,12 +328,71 @@ class TargetFpsPanel(QGroupBox):
         self.fps_spin.valueChanged.connect(self.target_fps_changed.emit)
 
 
+class BatchTimingPanel(QGroupBox):
+    """배치 수집 대기 시간 / 작업영역 비움 판정 기준을 조절하는 패널.
+
+    ★ integration/pipeline.py의 Pipeline 인스턴스 속성(batch_collection_sec,
+      required_empty_detections)을 실시간 조절함. 둘 다 기본값은 모듈 상수
+      (BATCH_COLLECTION_SEC/REQUIRED_EMPTY_DETECTIONS)에서 가져옴.
+
+    Signals:
+        batch_collection_sec_changed(float): 첫 물체 검출 후 추가 물체를 놓을 수
+            있게 기다리는 시간(초).
+        required_empty_detections_changed(int): "작업영역 비움" 판정까지 필요한
+            연속 빈 검출 횟수. 실제 시간이 아니라 검출 사이클 횟수 기준이라
+            (config.DETECT_EVERY_N_FRAMES에 따라 실제 걸리는 시간이 달라짐)
+            초 단위 대신 횟수로 노출함.
+    """
+
+    batch_collection_sec_changed = Signal(float)
+    required_empty_detections_changed = Signal(int)
+
+    COLLECTION_SCALE = 10  # 슬라이더 int 값 <-> 실제 초(float) 변환 배율
+
+    def __init__(self) -> None:
+        super().__init__("Batch Timing")
+
+        self.collection_slider = QSlider(Qt.Orientation.Horizontal)
+        self.collection_slider.setRange(10, 150)  # 실제 1.0 ~ 15.0초
+        self.collection_slider.setValue(
+            int(_DEFAULT_BATCH_COLLECTION_SEC * self.COLLECTION_SCALE)
+        )
+        self.collection_value_label = QLabel(f"{_DEFAULT_BATCH_COLLECTION_SEC:.1f}s")
+
+        collection_row = QHBoxLayout()
+        collection_row.addWidget(self.collection_slider)
+        collection_row.addWidget(self.collection_value_label)
+        collection_row.addStretch(1)
+
+        self.empty_detections_spin = QSpinBox()
+        self.empty_detections_spin.setRange(1, 50)
+        self.empty_detections_spin.setValue(_DEFAULT_REQUIRED_EMPTY_DETECTIONS)
+
+        empty_row = QHBoxLayout()
+        empty_row.addWidget(self.empty_detections_spin)
+        empty_row.addStretch(1)
+
+        layout = QFormLayout(self)
+        layout.addRow("Collection Wait", collection_row)
+        layout.addRow("Empty Detections", empty_row)
+
+        self.collection_slider.valueChanged.connect(self._emit_collection_sec)
+        self.empty_detections_spin.valueChanged.connect(
+            self.required_empty_detections_changed.emit
+        )
+
+    def _emit_collection_sec(self, value: int) -> None:
+        seconds = value / self.COLLECTION_SCALE
+        self.collection_value_label.setText(f"{seconds:.1f}s")
+        self.batch_collection_sec_changed.emit(seconds)
+
+
 class SettingsPanel(QGroupBox):
     """대시보드 사용 중 자주 조절하는 값들(카메라 각도, 시뮬 해상도, 검출
     confidence 등)을 세로로 길게 모아둔 패널. 화면 가장 오른쪽에 전체 높이로
     배치해서 항상 접근 가능하게 함.
 
-    ★ 하위 패널(target_fps/render_quality/camera_control/conf_threshold)은 각자의
+    ★ 하위 패널(target_fps/render_quality/camera_control/conf_threshold/batch_timing)은 각자의
       시그널을 그대로 노출함 — MainWindow가 self.settings_panel.camera_control처럼
       접근해서 연결. 조절 항목을 더 추가하고 싶으면 여기 __init__에 패널
       하나 만들어서 addWidget()만 하면 됨.
@@ -342,10 +405,12 @@ class SettingsPanel(QGroupBox):
         self.render_quality = RenderQualityPanel()
         self.camera_control = CameraControlPanel()
         self.conf_threshold = ConfThresholdPanel()
+        self.batch_timing = BatchTimingPanel()
 
         layout = QVBoxLayout(self)
         layout.addWidget(self.target_fps)
         layout.addWidget(self.render_quality)
         layout.addWidget(self.camera_control)
         layout.addWidget(self.conf_threshold)
+        layout.addWidget(self.batch_timing)
         layout.addStretch(1)  # 남는 세로 공간은 아래로 몰아서 패널들이 위로 붙게 함

@@ -42,14 +42,18 @@ from PySide6.QtCore import QThread, Signal
 from PySide6.QtGui import QImage
 
 import config
+from integration.pipeline import BATCH_COLLECTION_SEC as DEFAULT_BATCH_COLLECTION_SEC
 from integration.pipeline import Pipeline
+from integration.pipeline import REQUIRED_EMPTY_DETECTIONS as DEFAULT_REQUIRED_EMPTY_DETECTIONS
 
-FRAME_WIDTH = 240
-FRAME_HEIGHT = 180
+FRAME_WIDTH = 320
+FRAME_HEIGHT = 240
 """pybullet 시뮬레이션 패널 렌더링 해상도 (웹캠/검출 해상도와는 무관).
-★ p.getCameraImage()가 idle 상태 fps의 실질적인 상한. 실측상 320x240(~30-64ms/frame,
-  실제로 켜보니 무거움) vs 240x180(~57-65ms/frame이지만 체감상 320x240보다 가벼움)
-  vs 160x120(~9-28ms/frame, 제일 빠르지만 화질 아쉬움) — 240x180으로 확정.
+★ p.getCameraImage()가 idle 상태 fps의 실질적인 상한. 2026-08-04 실측 당시엔
+  320x240이 240x180보다 체감상 무거워서 240x180을 기본값으로 잡았었는데,
+  이후(로그 즉시 emit 전환, 워크스페이스 필터링, 모션 큐 무제한화 등) fps가
+  전반적으로 좋아져서 320x240으로 올려도 여유가 생김(2026-08-05). Render
+  Quality 패널에서 언제든 낮출 수 있음.
 ★ 로봇팔 이동 애니메이션의 "부드러움"은 이 해상도가 아니라
   robot/arm_controller.py의 STREAM_EVERY_N_STEPS(캡처 밀도)와 MOTION_REPLAY_FPS
   (재생 속도)가 결정함 — 이미 둘 다 2배로 올려둔 상태(개별 프레임 개수 증가).
@@ -123,6 +127,8 @@ class SimWorker(QThread):
         self._frame_width = FRAME_WIDTH
         self._frame_height = FRAME_HEIGHT
         self._conf_threshold = config.CONF_THRESHOLD
+        self._batch_collection_sec = DEFAULT_BATCH_COLLECTION_SEC
+        self._required_empty_detections = DEFAULT_REQUIRED_EMPTY_DETECTIONS
         # ★ 여기(__init__)는 메인/GUI 스레드에서 실행됩니다. 그래서 여기서
         #   pybullet을 connect하면 안 됩니다 — 실제 연결은 run() 안, 즉 워커
         #   스레드가 시작된 뒤에 해야 합니다.
@@ -202,6 +208,8 @@ class SimWorker(QThread):
         frame_width: int | None = None,
         frame_height: int | None = None,
         conf_threshold: float | None = None,
+        batch_collection_sec: float | None = None,
+        required_empty_detections: int | None = None,
     ) -> None:
         """SettingsDialog에서 OK를 눌렀을 때 MainWindow가 호출.
 
@@ -247,6 +255,14 @@ class SimWorker(QThread):
             # conf 속성 자체가 없으므로 건드리지 않음.
             if self._pipeline is not None and not self._use_dummy:
                 self._pipeline.detector.conf = conf_threshold
+        if batch_collection_sec is not None:
+            self._batch_collection_sec = batch_collection_sec
+            if self._pipeline is not None:
+                self._pipeline.batch_collection_sec = batch_collection_sec
+        if required_empty_detections is not None:
+            self._required_empty_detections = required_empty_detections
+            if self._pipeline is not None:
+                self._pipeline.required_empty_detections = required_empty_detections
 
         if view_changed:
             self._motion_frame_queue.clear()
@@ -266,6 +282,8 @@ class SimWorker(QThread):
             "frame_width": self._frame_width,
             "frame_height": self._frame_height,
             "conf_threshold": self._conf_threshold,
+            "batch_collection_sec": self._batch_collection_sec,
+            "required_empty_detections": self._required_empty_detections,
         }
 
     # ------------------------------------------------------------------ #
@@ -397,19 +415,19 @@ class SimWorker(QThread):
         네이티브 PyBullet 창 없이 계산만 하고, 화면은 getCameraImage()로 그립니다."""
 
         # log_fn: Pipeline 내부의 print() 대신 이 콜백으로 로그를 내보내게 해서
-        # GUI Log 패널에 뜨게 함(터미널이 아니라). self.log_message.emit을 직접
-        # 넘기지 않고 _on_pipeline_log를 거치는 이유: 화면(지연 재생 중인 프레임
-        # 큐)과 시점을 맞추기 위해 즉시 emit 대신 큐에 예약만 해둠.
+        # GUI Log 패널에 뜨게 함(터미널이 아니라).
         self._pipeline = Pipeline(
             use_dummy=self._use_dummy, use_gui=False, log_fn=self._on_pipeline_log
         )
         self._pipeline.start()
 
-        # TrashDetector는 생성 시점에 config.CONF_THRESHOLD로 conf를 초기화하므로,
-        # Reset으로 Pipeline이 새로 만들어지면 ConfThresholdPanel로 조절해둔 값이
-        # 사라지고 config 기본값으로 되돌아감. 여기서 다시 덮어써서 유지되게 함.
+        # 아래 값들은 Pipeline 생성 시점에 모듈 기본값으로 초기화되므로, Reset으로
+        # Pipeline이 새로 만들어지면 옵션바로 조절해둔 값이 사라지고 기본값으로
+        # 되돌아감. 여기서 다시 덮어써서 유지되게 함.
         if not self._use_dummy:
             self._pipeline.detector.conf = self._conf_threshold
+        self._pipeline.batch_collection_sec = self._batch_collection_sec
+        self._pipeline.required_empty_detections = self._required_empty_detections
 
         # 투영 행렬(fov/aspect/near/far)과 뷰 행렬(거리/yaw/pitch) 둘 다 여기서
         # 캐싱하지 않고 _capture_frame()에서 매번 최신 값으로 다시 계산함 —

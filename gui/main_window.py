@@ -289,6 +289,12 @@ class MainWindow(QMainWindow):
         self.settings_panel.camera_control.params_changed.connect(self._on_camera_params_changed)
         self.settings_panel.render_quality.resolution_changed.connect(self._on_resolution_changed)
         self.settings_panel.conf_threshold.threshold_changed.connect(self._on_conf_threshold_changed)
+        self.settings_panel.batch_timing.batch_collection_sec_changed.connect(
+            self._on_batch_collection_sec_changed
+        )
+        self.settings_panel.batch_timing.required_empty_detections_changed.connect(
+            self._on_required_empty_detections_changed
+        )
 
         # 웹캠 스레드 -> Sim 스레드로 원본 프레임을 직접 전달 (GUI 스레드 안 거침).
         # SimWorker는 자체 이벤트 루프(exec())를 안 돌리므로 큐잉 연결이 아니라
@@ -317,6 +323,16 @@ class MainWindow(QMainWindow):
         """ConfThresholdPanel.threshold_changed 시그널에 연결될 슬롯."""
 
         self.sim_worker.apply_settings(conf_threshold=threshold)
+
+    def _on_batch_collection_sec_changed(self, seconds: float) -> None:
+        """BatchTimingPanel.batch_collection_sec_changed 시그널에 연결될 슬롯."""
+
+        self.sim_worker.apply_settings(batch_collection_sec=seconds)
+
+    def _on_required_empty_detections_changed(self, count: int) -> None:
+        """BatchTimingPanel.required_empty_detections_changed 시그널에 연결될 슬롯."""
+
+        self.sim_worker.apply_settings(required_empty_detections=count)
 
     def _reconnect_webcam(self) -> None:
         """Reconnect 버튼 클릭 시 호출. 새 인덱스로 웹캠 스레드를 재시작.
