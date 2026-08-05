@@ -96,20 +96,6 @@ CATEGORY_TO_BIN: dict[Category, BinName] = {
 """
 
 
-def bin_for(category: Category) -> BinName:
-    """카테고리에 대응하는 수거함 이름을 반환.
-
-    CATEGORY_TO_BIN[...]을 직접 쓰는 것과 같지만, 잘못된 카테고리가 들어오면
-    KeyError 대신 뭐가 잘못됐는지 알려주는 에러를 냅니다.
-    """
-    if category not in CATEGORY_TO_BIN:
-        raise ValueError(
-            f"알 수 없는 카테고리: {category!r}. "
-            f"허용값: {list(CATEGORY_TO_BIN.keys())}"
-        )
-    return CATEGORY_TO_BIN[category]
-
-
 # ---------------------------------------------------------------------------
 # 3. Detection — 비전(1) -> 통합(2)
 # ---------------------------------------------------------------------------

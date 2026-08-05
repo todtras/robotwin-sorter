@@ -49,19 +49,3 @@ class RobotState(Enum):
     ERROR = auto()
     """IK 실패 또는 타임아웃. 홈 복귀 후 IDLE로 돌아가고
     해당 태스크는 실패로 기록됩니다."""
-
-
-TRANSITIONS: dict[RobotState, tuple[RobotState, str]] = {
-    # 현재 상태: (다음 상태, 전이 조건)
-    RobotState.IDLE:        (RobotState.APPROACH,    "SortTask 수신 & 목표가 작업영역 내"),
-    RobotState.APPROACH:    (RobotState.DESCEND,     "상공 도달 (오차 1cm 이내)"),
-    RobotState.DESCEND:     (RobotState.GRASP,       "물체 높이 도달"),
-    RobotState.GRASP:       (RobotState.LIFT,        "제약 생성 완료"),
-    RobotState.LIFT:        (RobotState.MOVE_TO_BIN, "안전 높이 도달"),
-    RobotState.MOVE_TO_BIN: (RobotState.RELEASE,     "수거함 상공 도달"),
-    RobotState.RELEASE:     (RobotState.RETURN,      "제약 해제 완료"),
-    RobotState.RETURN:      (RobotState.IDLE,        "홈 포지션 도달"),
-    RobotState.ERROR:       (RobotState.IDLE,        "홈 복귀 완료 (태스크는 실패 기록)"),
-}
-"""정상 전이표. 문서용이자 검증용입니다.
-보고서의 상태 다이어그램을 이 표에서 그대로 그리면 됩니다."""

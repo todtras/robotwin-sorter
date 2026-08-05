@@ -1,33 +1,20 @@
 """
 gui/sim_worker.py — integration.pipeline.Pipeline을 별도 스레드에서 구동하는 워커
 
-Qt 처음이면 알아둘 개념:
-- QThread: 별도 스레드에서 코드를 실행하게 해주는 클래스. `self.start()`를 호출하면
-  Qt가 새 스레드를 만들고 그 안에서 `run()` 메서드를 자동으로 호출해줍니다.
-  (run()을 직접 호출하면 그냥 지금 스레드에서 실행돼버리니 절대 직접 부르지 마세요.)
-- Signal: "이런 일이 일어났다"를 다른 객체(주로 다른 스레드에 있는 위젯)에게 알리는
-  통로입니다. `self.frame_ready.emit(image)`처럼 emit()으로 신호를 보내면, 이
-  시그널에 connect() 해둔 함수(슬롯)가 Qt에 의해 안전하게 GUI 스레드에서 호출됩니다.
-  스레드 간 데이터 전달은 항상 이 시그널을 통해서만 하세요.
-
 ★★★ 중요: pybullet의 physics client는 한 스레드에서만 호출해야 합니다.
     모든 p.* 호출(그리고 Pipeline 내부의 p.* 호출)은 이 클래스의 run() 안에서만
     일어나야 하고, MainWindow(GUI 스레드)는 절대 pybullet을 직접 부르면 안 됩니다.
 
 설계:
     - integration.pipeline.Pipeline이 로봇+수거함+분류 로직 전체를 소유합니다.
-      이 클래스는 그 Pipeline을 워커 스레드 안에서 만들고(run() 시작 시), 매
-      반복 Pipeline.step_cycle()을 호출한 뒤 화면만 그립니다.
+      이 클래스는 그 Pipeline을 워커 스레드 안에서 만들고(run() 시작 시), 
+      매 반복 Pipeline.step_cycle()을 호출한 뒤 화면만 그립니다.
     - Start / Stop / Reset의 의미 (공장 HMI 감각으로 정한 것):
         Start — 스레드가 없으면 새로 시작, 있으면 그 지점부터 재생 재개
         Stop  — 일시정지. pybullet 월드/누적 상태는 그대로 살아있음
         Reset — 월드를 완전히 버리고 처음부터 다시 생성
       즉 "스레드가 살아있는가"와 "지금 재생 중인가"는 서로 다른 상태입니다.
       전자(_thread_alive)는 Reset으로는 안 꺼지고, 창을 닫을 때만 꺼져야 합니다.
-    - use_dummy=True(기본값)면 DummyDetector/DummyArmController로 안전하게 돌아갑니다.
-      실제 웹캠+YOLO+로봇 연결은 use_dummy=False로 바꾸면 되는데, 그러려면
-      WebcamWorker가 잡은 프레임을 set_latest_frame()으로 받아야 합니다
-      (MainWindow가 webcam_worker.raw_frame_ready를 여기 연결해줌).
 """
 
 from __future__ import annotations
@@ -45,52 +32,28 @@ from integration.pipeline import BATCH_COLLECTION_SEC as DEFAULT_BATCH_COLLECTIO
 from integration.pipeline import Pipeline
 from integration.pipeline import REQUIRED_EMPTY_DETECTIONS as DEFAULT_REQUIRED_EMPTY_DETECTIONS
 
+# 기본 해상도
 FRAME_WIDTH = 320
 FRAME_HEIGHT = 240
-"""pybullet 시뮬레이션 패널 렌더링 해상도 (웹캠/검출 해상도와는 무관).
-★ p.getCameraImage()가 idle 상태 fps의 실질적인 상한. 2026-08-04 실측 당시엔
-  320x240이 240x180보다 체감상 무거워서 240x180을 기본값으로 잡았었는데,
-  이후(로그 즉시 emit 전환, 워크스페이스 필터링, 모션 큐 무제한화 등) fps가
-  전반적으로 좋아져서 320x240으로 올려도 여유가 생김(2026-08-05). Render
-  Quality 패널에서 언제든 낮출 수 있음.
-★ 로봇팔 이동 애니메이션의 "부드러움"은 이 해상도가 아니라
-  robot/arm_controller.py의 STREAM_EVERY_N_STEPS(캡처 밀도)와 MOTION_REPLAY_FPS
-  (재생 속도)가 결정함 — 이미 둘 다 2배로 올려둔 상태(개별 프레임 개수 증가).
-  이 해상도는 프레임 "개수"가 아니라 프레임 한 장의 화질에만 영향을 줌."""
-TARGET_FPS = 60  # 기본값. Settings 다이얼로그에서 바꾸면 인스턴스별 self._target_fps로 대체됨
 
-MOTION_REPLAY_FPS = 34
+# 로봇팔이 안 움직이는 idle 구간의 캡처 목표 fps(run()의 idle 캡처 게이트, 아래
+# 참고). 320x240 기준 캡처 자체가 ~15ms라 60fps(16.7ms 간격) 목표는 캡처 비용에
+# 막혀서 사실상 상한 역할을 못 함 — 해상도를 더 낮추기 전까진 큰 의미 없음.
+TARGET_FPS = 60
+
+MOTION_REPLAY_FPS = 35
 """로봇팔 이동 중 on_step()이 프레임을 emit하는 페이싱 목표 fps.
 ★ 물리 계산 자체는 sleep 없이 원래 속도(사실상 즉시)로 끝나버려서, 페이싱 없이
   캡처하는 족족 emit하면 물리가 빠르게 수렴하는 구간(짧은 이동)은 순식간에
   지나가버림. on_step()이 불릴 때마다 이 fps 기준 "다음 목표 시각"까지
   기다렸다가 캡처+emit해서 이동이 항상 일정한 속도로 "재생"되는 것처럼
   보이게 함 — sleep은 워커 스레드 안에서만 걸리므로 GUI 스레드는 안 막힘.
-★ (2026-08-05) 40 -> 25로 낮춤. 320x240 캡처가 평균 ~15ms지만 ±10~15ms로
-  들쭉날쭉해서, 40fps(예산 25ms/frame)에선 캡처가 조금만 느려져도 예산을
-  넘겨 끊겨 보였음. 25fps(예산 40ms/frame)로 여유를 넉넉히 주면 그 변동폭이
-  대부분 예산 안에 흡수됨 — 재생 속도는 느려지지만(트레이드오프) 끊김 없이
-  일정하게 보이는 걸 우선함.
-★ 2026-08-05 이전엔 on_step()이 프레임을 큐에 모아두기만 하고, step_cycle()이
-  리턴한 뒤 바깥 루프에서 이 fps로 재생하는 방식이었음 — 배치(물체 여러 개)가
-  다 끝날 때까지 화면이 아예 안 갱신되는 문제가 있어서, on_step() 안에서
-  직접 emit+페이싱하는 방식으로 교체(큐 자체를 없앰). 대가로 Stop/Reset은
-  여전히 물체 사이(또는 늦어도 한 이동 사이)에서만 반영됨 — 이동 도중
-  즉시 중단은 안 됨(그러려면 Pipeline 쪽에 취소 메커니즘이 필요).
 ★ robot/arm_controller.py의 STREAM_EVERY_N_STEPS와 2배씩 같이 조절할 것.
   캡처 밀도(N_STEPS)와 재생 속도(이 값)를 같은 비율로 올리면 재생 "시간"은
   거의 그대로 유지하면서 프레임 밀도만 올라가 더 매끄럽게 보임."""
 
-
 class SimWorker(QThread):
-    """Pipeline 루프를 도는 워커 스레드.
-
-    Signals (클래스 몸체에 이렇게 선언하면 "이 클래스의 인스턴스는 이런 이벤트를
-    내보낼 수 있다"는 뜻이 됩니다. 괄호 안 타입은 emit()할 때 넘길 데이터 타입):
-        frame_ready(QImage): 렌더링된 시뮬레이션 프레임 한 장.
-        state_changed(dict): {"fps", "step", "sorted", "success_rate"} 상태 값.
-        log_message(str): 로그 패널에 표시할 텍스트 한 줄.
-    """
+    """Pipeline 루프를 도는 워커 스레드."""
 
     frame_ready = Signal(QImage)
     state_changed = Signal(dict)
@@ -100,13 +63,14 @@ class SimWorker(QThread):
     def __init__(self, use_dummy: bool = True) -> None:
         super().__init__()
         self._use_dummy = use_dummy
-        self._thread_alive = False   # 스레드 자체의 생존 여부 (Reset으로는 안 꺼짐)
-        self._playing = False        # 재생 중인지 (Start/Stop이 토글)
+        self._thread_alive = False  # 스레드 자체의 생존 여부 (Reset으로는 안 꺼짐)
+        self._playing = False       # 재생 중인지 (Start/Stop이 토글)
         self._reset_requested = False
         self._pipeline: Pipeline | None = None
-        self._latest_frame = None    # WebcamWorker가 set_latest_frame()으로 채워줌 (real 모드용)
-        self.last_detections = []    # Pipeline이 계산한 최신 검출 결과. MainWindow가 웹캠 뷰에
-                                      # bbox를 그릴 때 읽어감 (YOLO 재실행 없이 재사용).
+        self._latest_frame = None   # WebcamWorker가 set_latest_frame()으로 채워줌 (real 모드용)
+        self.last_detections = []   # Pipeline이 계산한 최신 검출 결과. MainWindow가 웹캠 뷰에
+                                    # bbox를 그릴 때 읽어감 (YOLO 재실행 없이 재사용).
+
         # Settings 다이얼로그로 조절할 값들.
         self._target_fps = TARGET_FPS
         self._camera_distance = config.SIM_CAMERA_DISTANCE
@@ -155,7 +119,7 @@ class SimWorker(QThread):
         ★ 여기서 바로 pybullet을 재연결하면 안 됩니다. 이 메서드는 GUI 스레드에서
           실행되는데, pybullet은 워커 스레드에서만 호출해야 하기 때문입니다.
           대신 "리셋해줘"라는 요청 플래그만 세워두고, 실제 재생성은 run() 루프
-          안에서 다음 반복 시작 시 처리하게 하세요.
+          안에서 다음 반복 시작 시 처리.
         """
 
         self._reset_requested = True
@@ -166,7 +130,8 @@ class SimWorker(QThread):
         self._thread_alive = False
 
     def set_latest_frame(self, frame: np.ndarray) -> None:
-        """WebcamWorker 스레드가 새 프레임을 잡을 때마다 DirectConnection으로 직접
+        """
+        WebcamWorker 스레드가 새 프레임을 잡을 때마다 DirectConnection으로 직접
         호출됩니다 (GUI 스레드를 거치지 않음). 단순 참조 대입이라 락 없이도
         안전합니다 (CPython의 GIL이 대입 자체의 원자성을 보장).
 
@@ -175,16 +140,10 @@ class SimWorker(QThread):
         self._latest_frame = frame
 
     def _on_pipeline_log(self, message: str) -> None:
-        """Pipeline(log_fn)이 워커 스레드 안에서 직접 호출함(step_cycle() 호출
+        """
+        Pipeline(log_fn)이 워커 스레드 안에서 직접 호출함(step_cycle() 호출
         스택 안이라 self.run()과 같은 스레드 — cross-thread 아님).
-
-        즉시 emit. 예전엔 화면 재생 프레임 수에 맞춰 emit을 지연시켰었는데,
-        _execute_batch()가 move_to() 타임아웃으로 오래 블로킹되는 동안 그
-        지연 큐만 계속 쌓이다가(step_cycle()이 안 끝나서 drain도 안 됨) 풀리는
-        순간 한꺼번에 쏟아지는 "와르르" 버그가 있었음(2026-08-04). 실패 진단
-        시엔 실시간 피드백이 화면-로그 동기화보다 중요해서 즉시 emit으로
-        되돌림. FSM 라벨(robot_state_changed)은 여전히 프레임 큐와 같이
-        묶어서 지연 emit함 — 그쪽은 상태가 안 바뀌는 구간이라 문제 덜함."""
+        """
         self.log_message.emit(message)
 
     def apply_settings(
@@ -199,7 +158,9 @@ class SimWorker(QThread):
         batch_collection_sec: float | None = None,
         required_empty_detections: int | None = None,
     ) -> None:
-        """SettingsDialog에서 OK를 눌렀을 때 MainWindow가 호출.
+        """
+        옵션바(SettingsPanel, 상시 노출) 슬라이더/스핀박스가 바뀔 때마다
+        MainWindow가 호출.
 
         ★ 이것도 GUI 스레드에서 실행되는 메서드입니다. reset_simulation()과 똑같은
           이유로, 여기서 pybullet을 직접 건드리면 안 되고 인스턴스 변수만 갱신해야
@@ -233,27 +194,6 @@ class SimWorker(QThread):
             if self._pipeline is not None:
                 self._pipeline.required_empty_detections = required_empty_detections
 
-        # 카메라 각도/거리/렌더 해상도는 물리 씬과 무관한 "그리는 방식"일 뿐이라
-        # reset(물리 재생성)이 필요 없음. _capture_frame()이 매번 최신 값으로
-        # view_matrix/proj_matrix를 다시 계산하니 여기서 값만 갱신하면 다음
-        # 프레임부터 바로 반영됨. 큐가 없어져서(2026-08-05) 예전엔 여기서
-        # _motion_frame_queue를 비워야 했지만 이제는 그럴 필요도 없음 — 다음
-        # on_step()/idle 캡처가 바로 새 값으로 찍힘.
-
-    def get_settings(self) -> dict:
-        """Settings 다이얼로그를 열 때 현재 값으로 미리 채우기 위해 MainWindow가 호출."""
-        return {
-            "target_fps": self._target_fps,
-            "sim_distance": self._camera_distance,
-            "sim_yaw": self._camera_yaw,
-            "sim_pitch": self._camera_pitch,
-            "frame_width": self._frame_width,
-            "frame_height": self._frame_height,
-            "conf_threshold": self._conf_threshold,
-            "batch_collection_sec": self._batch_collection_sec,
-            "required_empty_detections": self._required_empty_detections,
-        }
-
     # ------------------------------------------------------------------ #
     # 아래부터는 전부 워커 스레드 안에서만 실행됨 (self.start() 호출 시 자동 실행)
     # ------------------------------------------------------------------ #
@@ -278,13 +218,13 @@ class SimWorker(QThread):
         frames_since_fps = 0
         last_fps_time = time.monotonic()
         last_frame_time = time.monotonic()
+        # on_step()이 다음 캡처+emit을 해도 되는 목표 시각(모션 재생 페이싱용).
+        # run() 시작 시/Reset 시에만 초기화하고, 그 외엔 on_step()이 스스로
+        # 갱신함(_emit_motion_frame 참고) — move_to() 호출 여러 번(한 물체의
+        # approach/descend/... 전부, 배치면 물체 여러 개까지)에 걸쳐 계속
+        # 이어지는 하나의 페이싱 시계라서 이동 경계마다 끊기지 않고 일정한
+        # 속도로 이어짐.
         next_motion_deadline = time.monotonic()
-        """on_step()이 다음 캡처+emit을 해도 되는 목표 시각(모션 재생 페이싱용).
-        run() 시작 시/Reset 시에만 초기화하고, 그 외엔 on_step()이 스스로
-        갱신함(_emit_motion_frame 참고) — move_to() 호출 여러 번(한 물체의
-        approach/descend/... 전부, 배치면 물체 여러 개까지)에 걸쳐 계속
-        이어지는 하나의 페이싱 시계라서 이동 경계마다 끊기지 않고 일정한
-        속도로 이어짐."""
 
         try:
             while self._thread_alive:
@@ -315,10 +255,8 @@ class SimWorker(QThread):
                 frame = None if self._use_dummy else self._latest_frame
 
                 # 로봇팔이 목표까지 이동하는 동안 STREAM_EVERY_N_STEPS 스텝마다 이
-                # 콜백이 불림 — 여기서 캡처하고 곧바로 emit까지 함(큐에 모아뒀다
-                # step_cycle() 리턴 후 재생하는 방식 폐지, 2026-08-05: 배치가 여러
-                # 물체를 동기 처리하는 동안 화면이 아예 안 갱신되던 문제의 근본
-                # 원인이었음). MOTION_REPLAY_FPS 목표 시각까지 sleep해서 페이싱을
+                # 콜백이 불림 — 여기서 캡처하고 곧바로 emit까지 함 
+                # MOTION_REPLAY_FPS 목표 시각까지 sleep해서 페이싱을
                 # 유지 — 페이싱 없이 그냥 emit만 하면 물리가 빨리 수렴하는 짧은
                 # 이동이 눈 깜빡할 새 지나가버림.
                 def _emit_motion_frame() -> None:

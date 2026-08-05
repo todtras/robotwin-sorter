@@ -745,11 +745,10 @@ class Pipeline:
             self._detect(frame)
         )
 
-        # self.last_detections(GUI bbox 표시용)는 원본 그대로 둠 — 뭐가
-        # 검출됐는지 디버깅용으로 다 보여줘야 함. 아래 state 판정에 쓰는
-        # detections만 걸러냄: 워크스페이스 밖 배경 물체가 계속 검출되면
-        # "첫 물체 검출"이 계속 오탐되거나(WAITING), "작업영역 비움" 판정이
-        # 영원히 안 나서(WAITING_CLEAR) 다음 배치로 못 넘어가는 문제가 있었음.
+        # self.last_detections(GUI bbox 표시용)는 원본 그대로 둠 — 디버깅용으로
+        # 뭐가 검출됐는지 다 보여줘야 함. 아래 state 판정에 쓰는 detections만
+        # 걸러냄 — 워크스페이스 밖 배경 물체가 섞이면 WAITING의 "첫 물체 검출"이
+        # 오탐되고 WAITING_CLEAR의 "작업영역 비움" 판정이 영원히 안 남.
         detections = self._filter_workspace_detections(detections)
 
         # -----------------------------------------------------

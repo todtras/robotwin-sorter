@@ -1,6 +1,5 @@
 from __future__ import annotations
 import random
-import time
 
 import config
 from common.schema import CLASS_NAMES, Detection, SortResult

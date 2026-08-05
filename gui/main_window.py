@@ -1,14 +1,10 @@
 """
 gui/main_window.py — Robot Dashboard 메인 윈도우
 
-★ 이 클래스는 pybullet/cv2를 직접 호출하면 안 됩니다. 모든 작업은 SimWorker /
-  WebcamWorker에게 메서드 호출로 명령하고, 결과(frame/state/log)는 시그널로 받아서
-  화면에 그리기만 합니다.
-
-Start / Stop / Reset은 시뮬레이션에만 적용됩니다 (웹캠은 창이 열려있는 동안 항상 촬영):
-    Start — 정지 상태면 새로 시작, 일시정지 상태면 그 지점부터 재개
-    Stop  — 일시정지 (상태 보존)
-    Reset — 완전히 새로 시작 (상태 초기화)
+★ 이 클래스는 pybullet/cv2를 직접 호출하면 안 됩니다. 
+   모든 작업은 SimWorker / WebcamWorker에게 메서드 호출로 명령하고, 
+   결과(frame/state/log)는 시그널로 받아서
+   화면에 그리기만 합니다.
 """
 
 from __future__ import annotations
@@ -39,11 +35,8 @@ from gui.webcam_worker import WebcamWorker
 class AspectRatioLabel(QLabel):
     """비율을 유지한 채 라벨 크기에 맞춰 이미지를 자동으로 리사이즈하는 QLabel.
 
-    일반 QLabel.setPixmap()은 이미지를 원본 크기 그대로 그리기 때문에, splitter로
-    라벨 크기를 바꿔도 이미지는 그대로입니다. 여기서는 원본 pixmap을 따로 저장해두고
-    "새 이미지가 들어왔을 때"와 "라벨 크기가 바뀌었을 때"(resizeEvent) 둘 다 같은
-    _rescale()로 다시 그려서, splitter를 드래그하는 즉시(새 프레임이 없어도)
-    비율을 유지한 채 크기가 따라오게 만듭니다.
+    QLabel.setPixmap()은 원본 크기 그대로 그려서 splitter로 라벨 크기를 바꿔도 이미지는 그대로. 
+    원본 pixmap을 저장해두고 창 크기에 따라 scaled()로 다시 그려서 반환
     """
 
     def __init__(
@@ -53,10 +46,9 @@ class AspectRatioLabel(QLabel):
     ) -> None:
         super().__init__(placeholder_text)
         self._original_pixmap: QPixmap | None = None
+        # Fast: 저비용/거친 화질 — 웹캠처럼 원본 해상도가 이미 높을 때 기본값.
+        # Smooth: 저해상도 업스케일 시(예: 시뮬레이션 렌더) 화질 우선.
         self._transformation_mode = transformation_mode
-        """FastTransformation: 매 프레임 스케일링 비용 절감(화질은 거칠어짐) — 웹캠처럼
-        원본 해상도가 이미 높은 경우 기본값. SmoothTransformation: 원본이 저해상도라
-        업스케일 티가 많이 날 때(예: 160x120 시뮬레이션 렌더) 화질 우선."""
 
     def setPixmap(self, pixmap: QPixmap) -> None:
         self._original_pixmap = pixmap
@@ -88,12 +80,10 @@ class MainWindow(QMainWindow):
         # 회사/앱 이름은 실제로 등록된 이름일 필요 없이, 이 앱만의 고유 키 역할만 함.
         self._settings = QSettings("RobotwinSorter", "RobotDashboard")
 
-        # use_dummy=True: DummyDetector/DummyArmController로 안전하게 시작.
         self.sim_worker = SimWorker(use_dummy=False)
         self.webcam_worker = WebcamWorker()
 
         self._stop_click_count = 0  # ★ 이스터에그: Stop 연속 10번 누르면 팀 소개 표시
-
         
         self._build_central_widget()
         self._build_toolbar()
@@ -103,12 +93,13 @@ class MainWindow(QMainWindow):
         self.webcam_worker.start_capture()
 
     def _build_toolbar(self) -> None:
-        """Start / Stop / Reset / Exit을 항상 보이는 툴바에 배치.
+        """Start / Stop / Reset / Screenshot / Exit을 항상 보이는 툴바에 배치.
 
         메뉴바(QMenuBar.addMenu)는 "Simulation"을 눌러야 펼쳐지는 드롭다운이라,
         매번 클릭 한 번이 더 필요합니다. QToolBar는 액션들이 버튼으로 항상 노출돼
         바로 클릭할 수 있습니다.
         """
+
         toolbar = self.addToolBar("Simulation")
         toolbar.setMovable(False)
         style = self.style()  # QStyle.StandardPixmap 아이콘은 별도 이미지 파일 없이 사용 가능
@@ -126,7 +117,12 @@ class MainWindow(QMainWindow):
         toolbar.addAction(reset_action)
 
         screenshot_action = QAction(style.standardIcon(QStyle.StandardPixmap.SP_DialogSaveButton), "Screenshot", self)
-        screenshot_action.triggered.connect(lambda: self._on_screenshot_clicked(prefix="manual"))
+        # QAction.triggered(bool checked)를 파라미터 없는 슬롯에 연결 — PySide6가
+        # 슬롯 시그니처를 보고 초과 인자를 알아서 잘라줌(문제 없음). 예전엔
+        # prefix="manual"을 넘기려고 람다로 감쌌었는데, 그 prefix를 파일명에서
+        # 안 쓰게 되면서 파라미터 자체를 없앰 — 잔재로 남겨두면 bool이 prefix에
+        # 잘못 들어가는 버그가 됨.
+        screenshot_action.triggered.connect(self._on_screenshot_clicked)
         toolbar.addAction(screenshot_action)
 
         toolbar.addSeparator()
@@ -154,14 +150,14 @@ class MainWindow(QMainWindow):
             self._stop_click_count = 0
             self._show_team_intro()
 
-    def _on_screenshot_clicked(self, prefix : str|None = None) -> None:
+    def _on_screenshot_clicked(self) -> None:
         """Screenshot 버튼 클릭. 시뮬레이션 화면을 PNG로 저장."""
 
         pixmap = self.grab()
 
         config.SCREENSHOT_DIR.mkdir(parents=True, exist_ok=True)
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        path = config.SCREENSHOT_DIR / f"{prefix}_{timestamp}.png"
+        path = config.SCREENSHOT_DIR / f"{timestamp}.png"
         
         if pixmap.save(str(path), "PNG"):
             self.log_panel.append_log(f"화면을 {path}로 저장했습니다.")
@@ -184,23 +180,26 @@ class MainWindow(QMainWindow):
     def _build_central_widget(self) -> None:
         """중앙 시뮬레이션 화면 + 웹캠 화면 + 로그/상태 패널 레이아웃."""
 
-        # 시뮬레이션 화면은 저해상도 렌더(RenderQualityPanel로 조절)를 큰 패널로
-        # 확대하는 거라 SmoothTransformation으로 화질을 우선함 (웹캠은 원본이
-        # 640x480이라 기본값 유지).
+        # 시뮬레이션 화면
         self.sim_view = AspectRatioLabel(
             "Waiting for simulation...", transformation_mode=Qt.TransformationMode.SmoothTransformation
         )
+
+        sim_group = QGroupBox("Simulation")
+        QVBoxLayout(sim_group).addWidget(self.sim_view)
+
+        # FSM 상태 표시
         self.fsm_label = QLabel("FSM: N/A", parent=self.sim_view)
         self.fsm_label.setStyleSheet("background-color: rgba(0, 0, 0, 128); color: white; padding: 2px;")
         self.fsm_label.move(10, 10)  # sim_view 왼쪽 위에 FSM 상태 표시
 
+        # 웹캠 화면
         self.webcam_view = AspectRatioLabel("Waiting for camera...")
+
+        # 로그/상태/설정 패널
         self.log_panel = LogPanel()
         self.status_panel = StatusPanel()
         self.settings_panel = SettingsPanel()
-
-        sim_group = QGroupBox("Simulation")
-        QVBoxLayout(sim_group).addWidget(self.sim_view)
 
         # 팀원마다 웹캠 장치 번호(config.CAMERA_INDEX)가 다를 수 있어서(외장캠 유무 등),
         # config.py를 직접 고치는 대신 대시보드에서만 즉석으로 바꿔볼 수 있게 함.
@@ -232,14 +231,11 @@ class MainWindow(QMainWindow):
         self.main_splitter = QSplitter(Qt.Orientation.Vertical)
         self.main_splitter.addWidget(self.sim_webcam_splitter)
         self.main_splitter.addWidget(self.log_status_splitter)
-        # 초기 비율(저장된 레이아웃이 없는 첫 실행 기준): 위(시뮬/웹캠)는 크게,
-        # 아래(로그/상태)는 작게. _restore_layout()이 저장된 값이 있으면 이걸
-        # 덮어씁니다.
+
+        # 초기 splitter 비율
         self.main_splitter.setSizes([600, 150])
 
-        # settings_panel(카메라/해상도/confidence 등 조절 패널)을 화면 가장
-        # 오른쪽에 전체 높이로 배치 — main_splitter 전체와 나란히 두는 가장
-        # 바깥쪽 가로 splitter.
+        # SettingsPanel은 main_splitter와 같은 높이로 고정, 오른쪽에 붙도록 root_splitter에 넣음
         self.root_splitter = QSplitter(Qt.Orientation.Horizontal, self)
         self.root_splitter.addWidget(self.main_splitter)
         self.root_splitter.addWidget(self.settings_panel)
@@ -247,12 +243,8 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(self.root_splitter)
 
     def _restore_layout(self) -> None:
-        """이전에 저장해둔 창 크기/splitter 비율이 있으면 복원.
+        """이전에 저장해둔 창 크기/splitter 비율이 있으면 복원."""
 
-        QByteArray를 그대로 저장/복원하는 saveGeometry()/restoreGeometry(),
-        splitter의 saveState()/restoreState()를 씁니다. 저장된 값이 없으면
-        (맨 처음 실행) _build_central_widget()에서 이미 정해둔 기본값을 그대로 둠.
-        """
         geometry = self._settings.value("window/geometry")
         if geometry is not None:
             self.restoreGeometry(geometry)
@@ -283,8 +275,10 @@ class MainWindow(QMainWindow):
         self.sim_worker.state_changed.connect(self.status_panel.update_state)
         self.sim_worker.log_message.connect(self.log_panel.append_log)
         self.sim_worker.robot_state_changed.connect(self.fsm_label.setText)
+
         self.webcam_worker.frame_ready.connect(self._on_webcam_frame)
         self.webcam_worker.log_message.connect(self.log_panel.append_log)
+
         self.settings_panel.target_fps.target_fps_changed.connect(self._on_target_fps_changed)
         self.settings_panel.camera_control.params_changed.connect(self._on_camera_params_changed)
         self.settings_panel.render_quality.resolution_changed.connect(self._on_resolution_changed)
@@ -337,11 +331,11 @@ class MainWindow(QMainWindow):
     def _reconnect_webcam(self) -> None:
         """Reconnect 버튼 클릭 시 호출. 새 인덱스로 웹캠 스레드를 재시작.
 
-        ★ cv2.VideoCapture는 스레드가 run() 시작할 때 한 번만 여니까, 인덱스만
-          바꿔서는 반영이 안 됩니다. stop_capture() -> wait()(스레드가 실제로
-          끝날 때까지 대기) -> set_camera_index() -> start_capture() 순서로
-          완전히 재시작해야 합니다. wait()는 GUI 스레드를 잠깐 블로킹하지만,
-          "카메라 다시 연결"은 사용자가 버튼을 누른 즉시 반응하는 액션이라
+        ★ cv2.VideoCapture는 스레드가 run() 시작할 때 한 번만 여니까, 
+          인덱스만 바꿔서는 반영이 안 됩니다. 
+          stop_capture() -> wait()(스레드가 실제로 끝날 때까지 대기) -> set_camera_index() -> start_capture() 
+          순서로 완전히 재시작해야 합니다. 
+          wait()는 GUI 스레드를 잠깐 블로킹하지만, "카메라 다시 연결"은 사용자가 버튼을 누른 즉시 반응하는 액션이라
           이 정도 지연은 자연스럽습니다.
         """
         new_index = self.camera_index_spin.value()

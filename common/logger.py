@@ -12,7 +12,6 @@ from pathlib import Path
 import csv
 import time
 from datetime import datetime
-from pathlib import Path
 import config
 from common.schema import Detection, FailReason, SortResult, SortTask
 
