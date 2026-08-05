@@ -304,8 +304,8 @@ class TargetFpsPanel(QGroupBox):
     """대시보드 목표 fps(SimWorker._target_fps) 조절 패널.
 
     ★ 로봇팔이 이동 중이면 이 값 대신 MOTION_REPLAY_FPS가 우선 적용됨 —
-      이 값은 "아무것도 안 움직이는(idle) 상태"의 재생 상한만 결정함
-      (gui/sim_worker.py의 replay_interval 계산 참고).
+      이 값은 "아무것도 안 움직이는(idle) 상태"의 캡처 상한만 결정함
+      (gui/sim_worker.py의 run() 안 idle 캡처 게이트 참고).
 
     Signals:
         target_fps_changed(int): MainWindow가 받아서

@@ -13,6 +13,7 @@ integration/pipeline.py — Qt 대시보드용 통합 파이프라인
 
 from __future__ import annotations
 
+import sys
 import time
 from typing import Any, Callable
 
@@ -922,6 +923,11 @@ def main() -> None:
 
     발표용 GUI 실행은 python -m gui를 사용합니다.
     """
+    # 한국어 Windows 콘솔 기본 인코딩(cp949)은 로그 문자열의 '—' 같은 문자를
+    # 못 담아서 print()가 UnicodeEncodeError로 죽음 — CLI 진입점에서 한 번만
+    # UTF-8로 바꿔줌(GUI 쪽은 log_fn=self.log_message.emit이라 print() 자체를
+    # 안 거치므로 이 문제가 없음).
+    sys.stdout.reconfigure(encoding="utf-8")
 
     use_dummy = False
 
