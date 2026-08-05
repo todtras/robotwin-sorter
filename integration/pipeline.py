@@ -308,6 +308,26 @@ class Pipeline:
         )
 
     # =========================================================
+    # 작업영역 밖 검출 제거
+    # =========================================================
+
+    def _filter_workspace_detections(
+        self,
+        detections: list[Any],
+    ) -> list[Any]:
+        """월드 좌표 기준으로 작업영역 밖 검출을 걸러냅니다."""
+
+        return [
+            det
+            for det in detections
+            if self.calibrator.is_in_workspace(
+                *self.calibrator.pixel_to_world(
+                    det.pixel_x, det.pixel_y
+                )
+            )
+        ]
+
+    # =========================================================
     # 중복 좌표 확인
     # =========================================================
 
@@ -719,6 +739,13 @@ class Pipeline:
         detections, t_detect_ms, did_detect = (
             self._detect(frame)
         )
+
+        # self.last_detections(GUI bbox 표시용)는 원본 그대로 둠 — 뭐가
+        # 검출됐는지 디버깅용으로 다 보여줘야 함. 아래 state 판정에 쓰는
+        # detections만 걸러냄: 워크스페이스 밖 배경 물체가 계속 검출되면
+        # "첫 물체 검출"이 계속 오탐되거나(WAITING), "작업영역 비움" 판정이
+        # 영원히 안 나서(WAITING_CLEAR) 다음 배치로 못 넘어가는 문제가 있었음.
+        detections = self._filter_workspace_detections(detections)
 
         # -----------------------------------------------------
         # 실제 물체 제거 대기

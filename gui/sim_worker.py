@@ -66,15 +66,6 @@ MOTION_REPLAY_FPS = 40
   캡처 밀도(N_STEPS)와 재생 속도(이 값)를 같은 비율로 올리면 재생 "시간"은
   거의 그대로 유지하면서 프레임 밀도만 올라가 더 매끄럽게 보임."""
 
-MOTION_FRAME_QUEUE_MAX = 160
-"""모션 큐 최대 길이 (약 작업 2개 분량, STREAM_EVERY_N_STEPS를 4->2로 낮춰
-프레임 밀도가 2배 됐으므로 큐 길이도 같이 2배로 맞춤).
-★ deque(maxlen=...)라서 꽉 찬 상태에서 append하면 가장 오래된 프레임이
-  자동으로 버려짐 — 즉 큐는 항상 시퀀스의 "최신" 구간을 담음. 예전엔 일반
-  list + "꽉 차면 새 프레임을 버림" 방식이라, 이동이 이 길이를 넘기면
-  RELEASE/RETURN처럼 뒤쪽 단계의 프레임이 아예 큐에 못 들어가서 화면상
-  "수거함까지 가더니 안 놓는" 것처럼 보이는 버그가 있었음."""
-
 
 class SimWorker(QThread):
     """Pipeline 루프를 도는 워커 스레드.
@@ -101,23 +92,28 @@ class SimWorker(QThread):
         self._latest_frame = None    # WebcamWorker가 set_latest_frame()으로 채워줌 (real 모드용)
         self.last_detections = []    # Pipeline이 계산한 최신 검출 결과. MainWindow가 웹캠 뷰에
                                       # bbox를 그릴 때 읽어감 (YOLO 재실행 없이 재사용).
-        self._motion_frame_queue: deque[tuple[QImage, str]] = deque(maxlen=MOTION_FRAME_QUEUE_MAX)
+        self._motion_frame_queue: deque[tuple[QImage, str]] = deque()
         """로봇팔이 이동하는 동안 on_step()이 캡처해둔 (중간 프레임, 그 순간의 FSM
         상태) 쌍들. step_cycle() 자체는 sleep 없이 빠르게 끝나므로, 여기 쌓인 걸
         run() 루프가 MOTION_REPLAY_FPS 속도로 하나씩 꺼내 재생함.
         ★ 상태를 프레임이랑 같이 저장해두는 이유: FSM 상태를 캡처 즉시 emit하면
           "지금 화면에 재생 중인(몇 초 전) 프레임"과 "지금 막 emit된(실시간) 상태"가
           서로 다른 시점을 가리켜서 어긋나 보임. 프레임을 꺼낼 때 그때 저장해둔
-          상태를 같이 꺼내 emit해야 화면에 보이는 것과 라벨이 항상 짝이 맞음."""
+          상태를 같이 꺼내 emit해야 화면에 보이는 것과 라벨이 항상 짝이 맞음.
+        ★ 상한 없음(2026-08-05 이전엔 maxlen=160으로 캡을 뒀었음). _execute_batch()가
+          배치 전체(물체 여러 개)를 step_cycle() 한 번 안에서 동기 처리하는 동안
+          이 큐는 drain 없이 계속 쌓이기만 하는데, 캡이 있으면 물체 3개 이상
+          배치에서 앞쪽 물체(1번)의 approach/descend/grasp 프레임이 뒤쪽 물체
+          처리 중 캡처된 프레임에 밀려 통째로 유실 -> 재생이 이미 물체 1번을
+          수거함에 넣는 장면부터 시작하는 것처럼 보이는 버그가 있었음. 배치가
+          유한(사용자가 놓은 물체 수)이라 무제한으로 둬도 메모리 문제 없음."""
 
-        self._pending_log_queue: deque[tuple[int, str]] = deque()
-        """Pipeline.log_fn(=_on_pipeline_log)으로 들어온 메시지를 곧바로 emit하지
-        않고 미뤄서 내보내기 위한 큐: (그 메시지를 내보내도 되는 누적 재생 프레임
-        번호, 메시지). 로그도 FSM 상태와 같은 이유로 어긋남 — "수거 시작" 같은
-        메시지가 실시간으로 찍히는 동안 화면은 몇 초 전 프레임을 재생 중이라,
-        메시지가 로그된 시점에 이미 큐에 쌓여있던 프레임들이 다 재생된 뒤에야
-        emit해야 화면과 시점이 맞음."""
-        self._frames_played_total = 0
+        self._pending_completion_message: str | None = None
+        """"분류 완료" 요약 로그. step_cycle()이 배치를 다 처리하고 나면 바로
+        나오는데, 그 시점엔 _motion_frame_queue에 아직 재생 안 된 이동 장면이
+        몇 초치 남아있을 수 있어서 즉시 emit하면 "완료" 로그가 화면보다 먼저
+        떠서 부자연스러움. 큐가 다 빠져서 화면이 "지금"을 따라잡는 순간까지
+        들고 있다가 그때 emit함(run() 하단 재생 루프 참고)."""
 
         # Settings 다이얼로그로 조절할 값들.
         self._target_fps = TARGET_FPS
@@ -188,22 +184,14 @@ class SimWorker(QThread):
         """Pipeline(log_fn)이 워커 스레드 안에서 직접 호출함(step_cycle() 호출
         스택 안이라 self.run()과 같은 스레드 — cross-thread 아님).
 
-        바로 emit하지 않고, "이 메시지가 로그된 시점에 이미 큐에 쌓여있던
-        프레임 수만큼 재생된 뒤에" 내보내도록 예약만 해둠 — FSM 상태를 프레임과
-        같이 큐에 저장하는 것과 같은 이유(run() 하단의 큐 drain 부분 참고).
-        큐가 비어있으면(밀린 화면이 없음) target이 지금 값 그대로라 다음
-        프레임 하나 재생되자마자 바로 나감 — 사실상 즉시emit과 다름없음.
-
-        TODO(8/4): _execute_batch()가 move_to() 타임아웃으로 오래 블로킹되면
-          그동안 step_cycle()이 안 끝나서 프레임 drain 자체가 멈추고, 그 사이
-          쌓인 로그가 전부 지연된 채로 대기하다가 풀리는 순간 한꺼번에
-          쏟아지는 문제 발견("와르르" 버그). 실패 진단 시 실시간 피드백이
-          사라지는 게 더 치명적이라, 로그는 이 지연 로직 없이 즉시
-          self.log_message.emit(message)로 되돌리는 걸 검토 (FSM 라벨
-          페어링은 유지 — 그쪽은 상태가 안 바뀌는 구간이라 문제 덜함).
-        """
-        target = self._frames_played_total + len(self._motion_frame_queue)
-        self._pending_log_queue.append((target, message))
+        즉시 emit. 예전엔 화면 재생 프레임 수에 맞춰 emit을 지연시켰었는데,
+        _execute_batch()가 move_to() 타임아웃으로 오래 블로킹되는 동안 그
+        지연 큐만 계속 쌓이다가(step_cycle()이 안 끝나서 drain도 안 됨) 풀리는
+        순간 한꺼번에 쏟아지는 "와르르" 버그가 있었음(2026-08-04). 실패 진단
+        시엔 실시간 피드백이 화면-로그 동기화보다 중요해서 즉시 emit으로
+        되돌림. FSM 라벨(robot_state_changed)은 여전히 프레임 큐와 같이
+        묶어서 지연 emit함 — 그쪽은 상태가 안 바뀌는 구간이라 문제 덜함."""
+        self.log_message.emit(message)
 
     def apply_settings(
         self,
@@ -319,8 +307,7 @@ class SimWorker(QThread):
                     self.frame_ready.emit(self._capture_frame())
                     self.last_detections = []
                     self._motion_frame_queue.clear()
-                    self._pending_log_queue.clear()
-                    self._frames_played_total = 0
+                    self._pending_completion_message = None
 
                     self._reset_requested = False
                     self._playing = False
@@ -337,13 +324,9 @@ class SimWorker(QThread):
                 # 로봇팔이 목표까지 이동하는 동안 STREAM_EVERY_N_STEPS 스텝마다 이
                 # 콜백이 불려서 중간 프레임을 큐에 쌓음(캡처만, sleep 없음 -> 이
                 # 스레드가 안 막힘). 쌓인 프레임은 아래에서 MOTION_REPLAY_FPS
-                # 속도로 하나씩 꺼내 내보내면서 재생됨.
-                # ★ 큐 상한(MOTION_FRAME_QUEUE_MAX): deque(maxlen=...)라서 꽉 찬 채로
-                #   append하면 가장 오래된 프레임부터 자동으로 밀려남 -> 큐는 항상
-                #   시퀀스의 최신 구간(RELEASE/RETURN 포함)을 담게 됨. 너무 크게
-                #   잡으면 물체를 실제로 치운 뒤에도 큐에 쌓인 지난 프레임들이 다
-                #   빠질 때까지 "그때 그 장면"이 계속 재생돼서 실시간처럼 안
-                #   느껴짐 — 대략 작업 2개 분량으로 제한.
+                # 속도로 하나씩 꺼내 내보내면서 재생됨. 큐는 상한 없음(위 필드
+                # docstring 참고) — 배치 안 물체가 여러 개라 프레임이 많이 쌓여도
+                # 유실 없이 순서대로 다 재생됨.
                 def _queue_motion_frame() -> None:
                     # 캡처 시점의 FSM 상태를 프레임과 함께 저장 -> 나중에 이 프레임이
                     # 실제로 화면에 나올 때 같이 꺼내 emit해야 라벨이 어긋나지 않음.
@@ -355,7 +338,7 @@ class SimWorker(QThread):
                 step_count += 1
                 if completed:
                     summary = self._pipeline.logger.summary()
-                    self.log_message.emit(
+                    self._pending_completion_message = (
                         f"분류 완료 (누적 {summary['total']}회, 성공률 {summary['success_rate']:.0%})"
                     )
 
@@ -384,15 +367,11 @@ class SimWorker(QThread):
                         if not self._use_dummy:
                             self.robot_state_changed.emit(self._pipeline.arm.state.name)
 
-                    self._frames_played_total += 1
-                    # 방금 재생한 프레임 시점까지 도달한(=그때 밀려있던 프레임이
-                    # 다 재생된) 예약 로그들을 순서대로 내보냄.
-                    while (
-                        self._pending_log_queue
-                        and self._pending_log_queue[0][0] <= self._frames_played_total
-                    ):
-                        _, pending_message = self._pending_log_queue.popleft()
-                        self.log_message.emit(pending_message)
+                        # 큐가 방금 비어서 화면이 "지금"을 따라잡은 시점 ->
+                        # 밀려있던 "분류 완료" 요약이 있으면 지금 내보냄.
+                        if self._pending_completion_message is not None:
+                            self.log_message.emit(self._pending_completion_message)
+                            self._pending_completion_message = None
 
                     frames_since_fps += 1
                     last_frame_time = now
@@ -444,7 +423,7 @@ class SimWorker(QThread):
             self._pipeline = None
         self.last_detections = []
         self._motion_frame_queue.clear()
-        self._pending_log_queue.clear()
+        self._pending_completion_message = None
 
     def _capture_frame(self) -> QImage:
         """현재 씬을 렌더링해서 QImage로 변환합니다.
