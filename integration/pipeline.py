@@ -32,7 +32,7 @@ from tests.dummy_vision import DummyDetector
 BATCH_COLLECTION_SEC = 5.0
 
 # 전체 수거 후 연속 이 횟수만큼 검출이 없어야 다음 배치를 시작
-REQUIRED_EMPTY_DETECTIONS = 10
+REQUIRED_EMPTY_DETECTIONS = 3
 
 # 최근 처리 좌표 재검출 방지 시간
 SORTED_COOLDOWN_SEC = 1.0

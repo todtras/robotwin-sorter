@@ -33,7 +33,6 @@ Qt 처음이면 알아둘 개념:
 from __future__ import annotations
 
 import time
-from collections import deque
 
 import numpy as np
 import pybullet as p
@@ -60,12 +59,24 @@ FRAME_HEIGHT = 240
   이 해상도는 프레임 "개수"가 아니라 프레임 한 장의 화질에만 영향을 줌."""
 TARGET_FPS = 60  # 기본값. Settings 다이얼로그에서 바꾸면 인스턴스별 self._target_fps로 대체됨
 
-MOTION_REPLAY_FPS = 40
-"""로봇팔 이동 중 쌓인 프레임 큐를 재생할 때 쓰는 속도.
-★ 물리 계산 자체는 sleep 없이 원래 속도(사실상 즉시)로 끝나버려서, on_step()이
-  만든 중간 프레임들을 큐에 모아뒀다가 이 fps로 하나씩 내보냄 — sleep으로
-  스레드를 막지 않으면서도 "느리게 움직이는 것처럼" 보이게 하는 방법.
-  큐를 비우는 동안엔 target_fps 대신 이 값을 씀 (더 낮은 fps = 더 느린 재생).
+MOTION_REPLAY_FPS = 34
+"""로봇팔 이동 중 on_step()이 프레임을 emit하는 페이싱 목표 fps.
+★ 물리 계산 자체는 sleep 없이 원래 속도(사실상 즉시)로 끝나버려서, 페이싱 없이
+  캡처하는 족족 emit하면 물리가 빠르게 수렴하는 구간(짧은 이동)은 순식간에
+  지나가버림. on_step()이 불릴 때마다 이 fps 기준 "다음 목표 시각"까지
+  기다렸다가 캡처+emit해서 이동이 항상 일정한 속도로 "재생"되는 것처럼
+  보이게 함 — sleep은 워커 스레드 안에서만 걸리므로 GUI 스레드는 안 막힘.
+★ (2026-08-05) 40 -> 25로 낮춤. 320x240 캡처가 평균 ~15ms지만 ±10~15ms로
+  들쭉날쭉해서, 40fps(예산 25ms/frame)에선 캡처가 조금만 느려져도 예산을
+  넘겨 끊겨 보였음. 25fps(예산 40ms/frame)로 여유를 넉넉히 주면 그 변동폭이
+  대부분 예산 안에 흡수됨 — 재생 속도는 느려지지만(트레이드오프) 끊김 없이
+  일정하게 보이는 걸 우선함.
+★ 2026-08-05 이전엔 on_step()이 프레임을 큐에 모아두기만 하고, step_cycle()이
+  리턴한 뒤 바깥 루프에서 이 fps로 재생하는 방식이었음 — 배치(물체 여러 개)가
+  다 끝날 때까지 화면이 아예 안 갱신되는 문제가 있어서, on_step() 안에서
+  직접 emit+페이싱하는 방식으로 교체(큐 자체를 없앰). 대가로 Stop/Reset은
+  여전히 물체 사이(또는 늦어도 한 이동 사이)에서만 반영됨 — 이동 도중
+  즉시 중단은 안 됨(그러려면 Pipeline 쪽에 취소 메커니즘이 필요).
 ★ robot/arm_controller.py의 STREAM_EVERY_N_STEPS와 2배씩 같이 조절할 것.
   캡처 밀도(N_STEPS)와 재생 속도(이 값)를 같은 비율로 올리면 재생 "시간"은
   거의 그대로 유지하면서 프레임 밀도만 올라가 더 매끄럽게 보임."""
@@ -96,29 +107,6 @@ class SimWorker(QThread):
         self._latest_frame = None    # WebcamWorker가 set_latest_frame()으로 채워줌 (real 모드용)
         self.last_detections = []    # Pipeline이 계산한 최신 검출 결과. MainWindow가 웹캠 뷰에
                                       # bbox를 그릴 때 읽어감 (YOLO 재실행 없이 재사용).
-        self._motion_frame_queue: deque[tuple[QImage, str]] = deque()
-        """로봇팔이 이동하는 동안 on_step()이 캡처해둔 (중간 프레임, 그 순간의 FSM
-        상태) 쌍들. step_cycle() 자체는 sleep 없이 빠르게 끝나므로, 여기 쌓인 걸
-        run() 루프가 MOTION_REPLAY_FPS 속도로 하나씩 꺼내 재생함.
-        ★ 상태를 프레임이랑 같이 저장해두는 이유: FSM 상태를 캡처 즉시 emit하면
-          "지금 화면에 재생 중인(몇 초 전) 프레임"과 "지금 막 emit된(실시간) 상태"가
-          서로 다른 시점을 가리켜서 어긋나 보임. 프레임을 꺼낼 때 그때 저장해둔
-          상태를 같이 꺼내 emit해야 화면에 보이는 것과 라벨이 항상 짝이 맞음.
-        ★ 상한 없음(2026-08-05 이전엔 maxlen=160으로 캡을 뒀었음). _execute_batch()가
-          배치 전체(물체 여러 개)를 step_cycle() 한 번 안에서 동기 처리하는 동안
-          이 큐는 drain 없이 계속 쌓이기만 하는데, 캡이 있으면 물체 3개 이상
-          배치에서 앞쪽 물체(1번)의 approach/descend/grasp 프레임이 뒤쪽 물체
-          처리 중 캡처된 프레임에 밀려 통째로 유실 -> 재생이 이미 물체 1번을
-          수거함에 넣는 장면부터 시작하는 것처럼 보이는 버그가 있었음. 배치가
-          유한(사용자가 놓은 물체 수)이라 무제한으로 둬도 메모리 문제 없음."""
-
-        self._pending_completion_message: str | None = None
-        """"분류 완료" 요약 로그. step_cycle()이 배치를 다 처리하고 나면 바로
-        나오는데, 그 시점엔 _motion_frame_queue에 아직 재생 안 된 이동 장면이
-        몇 초치 남아있을 수 있어서 즉시 emit하면 "완료" 로그가 화면보다 먼저
-        떠서 부자연스러움. 큐가 다 빠져서 화면이 "지금"을 따라잡는 순간까지
-        들고 있다가 그때 emit함(run() 하단 재생 루프 참고)."""
-
         # Settings 다이얼로그로 조절할 값들.
         self._target_fps = TARGET_FPS
         self._camera_distance = config.SIM_CAMERA_DISTANCE
@@ -217,25 +205,6 @@ class SimWorker(QThread):
           이유로, 여기서 pybullet을 직접 건드리면 안 되고 인스턴스 변수만 갱신해야
           합니다.
         """
-        # 로봇팔이 이동 중이면 _motion_frame_queue에 "이전 각도/해상도로 이미
-        # 렌더링된" 프레임들이 몇 초 분량 쌓여있을 수 있음 — 그 값들은 이미
-        # QImage로 구워진 상태라 각도를 바꿔도 소급 적용이 안 됨. 그래서 값만
-        # 바꾸면 큐에 쌓인 옛날 프레임들이 다 재생될 때까지(최대 몇 초) 마치
-        # 안 바뀐 것처럼 보임. 큐를 비워서 다음 프레임부터 바로 새 값으로
-        # 다시 캡처되게 함 (그 순간 로봇팔 재생이 살짝 끊기지만, 카메라를
-        # 조작하는 바로 그 타이밍이라 눈에 잘 안 띔).
-        # ★ 이 메서드는 GUI 스레드, 큐를 채우는/비우는 쪽은 워커 스레드라
-        #   .clear()가 다른 스레드의 .append()/.popleft()와 겹칠 수 있는데,
-        #   deque의 각 연산은 GIL 덕분에 원자적이라 깨지진 않음 — set_latest_frame()과
-        #   같은 근거로 락 없이도 안전함.
-        view_changed = (
-            (distance is not None and distance != self._camera_distance)
-            or (yaw is not None and yaw != self._camera_yaw)
-            or (pitch is not None and pitch != self._camera_pitch)
-            or (frame_width is not None and frame_width != self._frame_width)
-            or (frame_height is not None and frame_height != self._frame_height)
-        )
-
         if target_fps is not None:
             self._target_fps = target_fps
         if distance is not None:
@@ -264,13 +233,12 @@ class SimWorker(QThread):
             if self._pipeline is not None:
                 self._pipeline.required_empty_detections = required_empty_detections
 
-        if view_changed:
-            self._motion_frame_queue.clear()
-
         # 카메라 각도/거리/렌더 해상도는 물리 씬과 무관한 "그리는 방식"일 뿐이라
         # reset(물리 재생성)이 필요 없음. _capture_frame()이 매번 최신 값으로
         # view_matrix/proj_matrix를 다시 계산하니 여기서 값만 갱신하면 다음
-        # 프레임부터 바로 반영됨.
+        # 프레임부터 바로 반영됨. 큐가 없어져서(2026-08-05) 예전엔 여기서
+        # _motion_frame_queue를 비워야 했지만 이제는 그럴 필요도 없음 — 다음
+        # on_step()/idle 캡처가 바로 새 값으로 찍힘.
 
     def get_settings(self) -> dict:
         """Settings 다이얼로그를 열 때 현재 값으로 미리 채우기 위해 MainWindow가 호출."""
@@ -310,6 +278,13 @@ class SimWorker(QThread):
         frames_since_fps = 0
         last_fps_time = time.monotonic()
         last_frame_time = time.monotonic()
+        next_motion_deadline = time.monotonic()
+        """on_step()이 다음 캡처+emit을 해도 되는 목표 시각(모션 재생 페이싱용).
+        run() 시작 시/Reset 시에만 초기화하고, 그 외엔 on_step()이 스스로
+        갱신함(_emit_motion_frame 참고) — move_to() 호출 여러 번(한 물체의
+        approach/descend/... 전부, 배치면 물체 여러 개까지)에 걸쳐 계속
+        이어지는 하나의 페이싱 시계라서 이동 경계마다 끊기지 않고 일정한
+        속도로 이어짐."""
 
         try:
             while self._thread_alive:
@@ -321,11 +296,10 @@ class SimWorker(QThread):
                     frames_since_fps = 0
                     last_fps_time = time.monotonic()
                     last_frame_time = time.monotonic()
+                    next_motion_deadline = time.monotonic()
 
                     self.frame_ready.emit(self._capture_frame())
                     self.last_detections = []
-                    self._motion_frame_queue.clear()
-                    self._pending_completion_message = None
 
                     self._reset_requested = False
                     self._playing = False
@@ -339,57 +313,58 @@ class SimWorker(QThread):
                 # 건너뜀 — ultralytics가 None을 번들 샘플 이미지로 대체해 가짜 검출을
                 # 만들어내는 걸 막기 위한 가드가 거기 있음.
                 frame = None if self._use_dummy else self._latest_frame
-                # 로봇팔이 목표까지 이동하는 동안 STREAM_EVERY_N_STEPS 스텝마다 이
-                # 콜백이 불려서 중간 프레임을 큐에 쌓음(캡처만, sleep 없음 -> 이
-                # 스레드가 안 막힘). 쌓인 프레임은 아래에서 MOTION_REPLAY_FPS
-                # 속도로 하나씩 꺼내 내보내면서 재생됨. 큐는 상한 없음(위 필드
-                # docstring 참고) — 배치 안 물체가 여러 개라 프레임이 많이 쌓여도
-                # 유실 없이 순서대로 다 재생됨.
-                def _queue_motion_frame() -> None:
-                    # 캡처 시점의 FSM 상태를 프레임과 함께 저장 -> 나중에 이 프레임이
-                    # 실제로 화면에 나올 때 같이 꺼내 emit해야 라벨이 어긋나지 않음.
-                    state_name = self._pipeline.arm.state.name
-                    self._motion_frame_queue.append((self._capture_frame(), state_name))
 
-                completed = self._pipeline.step_cycle(frame, on_step=_queue_motion_frame)
+                # 로봇팔이 목표까지 이동하는 동안 STREAM_EVERY_N_STEPS 스텝마다 이
+                # 콜백이 불림 — 여기서 캡처하고 곧바로 emit까지 함(큐에 모아뒀다
+                # step_cycle() 리턴 후 재생하는 방식 폐지, 2026-08-05: 배치가 여러
+                # 물체를 동기 처리하는 동안 화면이 아예 안 갱신되던 문제의 근본
+                # 원인이었음). MOTION_REPLAY_FPS 목표 시각까지 sleep해서 페이싱을
+                # 유지 — 페이싱 없이 그냥 emit만 하면 물리가 빨리 수렴하는 짧은
+                # 이동이 눈 깜빡할 새 지나가버림.
+                def _emit_motion_frame() -> None:
+                    nonlocal last_frame_time, frames_since_fps, next_motion_deadline
+
+                    now = time.monotonic()
+                    if now < next_motion_deadline:
+                        time.sleep(next_motion_deadline - now)
+                        now = next_motion_deadline
+                    # 여기서부터가 "다음 목표 시각"의 기준점 — 이미 목표보다
+                    # 늦었으면(캡처 자체가 페이싱 간격보다 오래 걸린 경우) sleep을
+                    # 건너뛰고 지금 시각을 새 기준으로 삼음. 밀린 시간을 나중에
+                    # "따라잡으려" 하지 않음 -> 밀림이 누적되지 않음.
+                    next_motion_deadline = now + 1.0 / MOTION_REPLAY_FPS
+
+                    # 캡처 시점의 FSM 상태를 프레임과 함께 emit -> 화면에 보이는
+                    # 것과 라벨이 항상 짝이 맞음.
+                    state_name = self._pipeline.arm.state.name
+                    self.frame_ready.emit(self._capture_frame())
+                    self.robot_state_changed.emit(state_name)
+
+                    frames_since_fps += 1
+                    last_frame_time = now
+
+                completed = self._pipeline.step_cycle(frame, on_step=_emit_motion_frame)
                 self.last_detections = self._pipeline.last_detections
                 step_count += 1
                 if completed:
                     summary = self._pipeline.logger.summary()
-                    self._pending_completion_message = (
+                    self.log_message.emit(
                         f"분류 완료 (누적 {summary['total']}회, 성공률 {summary['success_rate']:.0%})"
                     )
 
                 now = time.monotonic()
 
+                # 로봇팔이 안 움직이는 idle 구간(WAITING/COLLECTING/WAITING_CLEAR 등,
+                # on_step()이 한 번도 안 불린 step_cycle() 호출)에는 위 콜백이 전혀
+                # 안 불렸으므로 여기서 target_fps로 따로 캡처해서 화면을 갱신함.
                 # 스텝 수가 아니라 실제 경과 시간으로 캡처 여부를 판단 -> msleep 값과
-                # 무관하게 항상 목표 fps에 가깝게 프레임이 나옴.
-                # self._target_fps를 매번 다시 읽으므로 apply_settings()로 바꾼 값이
-                # 다음 반복부터 바로 반영됨 (모듈 상수 FRAME_INTERVAL 대신 사용).
-                # 큐에 재생할 프레임이 남아있으면 target_fps 대신 더 느린
-                # MOTION_REPLAY_FPS로 하나씩 꺼내 보임 -> 로봇팔 이동이 실제
-                # 속도가 아니라 이 속도로 "재생"되는 것처럼 보임.
-                replay_interval = (
-                    1.0 / MOTION_REPLAY_FPS if self._motion_frame_queue else 1.0 / self._target_fps
-                )
-                if now - last_frame_time >= replay_interval:
-                    if self._motion_frame_queue:
-                        image, state_name = self._motion_frame_queue.popleft()
-                        self.frame_ready.emit(image)
-                        self.robot_state_changed.emit(state_name)
-                    else:
-                        # 큐가 비어있으면 지연 없이 "지금" 캡처하는 거라, 지금의
-                        # 실제 상태를 같이 보여줘도 어긋나지 않음. 더미 모드는
-                        # arm에 .state 자체가 없으므로 건드리지 않음.
-                        self.frame_ready.emit(self._capture_frame())
-                        if not self._use_dummy:
-                            self.robot_state_changed.emit(self._pipeline.arm.state.name)
-
-                        # 큐가 방금 비어서 화면이 "지금"을 따라잡은 시점 ->
-                        # 밀려있던 "분류 완료" 요약이 있으면 지금 내보냄.
-                        if self._pending_completion_message is not None:
-                            self.log_message.emit(self._pending_completion_message)
-                            self._pending_completion_message = None
+                # 무관하게 항상 목표 fps에 가깝게 프레임이 나옴. self._target_fps를
+                # 매번 다시 읽으므로 apply_settings()로 바꾼 값이 다음 반복부터 바로
+                # 반영됨.
+                if now - last_frame_time >= 1.0 / self._target_fps:
+                    self.frame_ready.emit(self._capture_frame())
+                    if not self._use_dummy:
+                        self.robot_state_changed.emit(self._pipeline.arm.state.name)
 
                     frames_since_fps += 1
                     last_frame_time = now
@@ -440,8 +415,6 @@ class SimWorker(QThread):
             self._pipeline.shutdown()
             self._pipeline = None
         self.last_detections = []
-        self._motion_frame_queue.clear()
-        self._pending_completion_message = None
 
     def _capture_frame(self) -> QImage:
         """현재 씬을 렌더링해서 QImage로 변환합니다.
